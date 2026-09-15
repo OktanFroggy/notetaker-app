@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import FullCalendar from '@fullcalendar/vue3'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction'
@@ -10,7 +10,7 @@ import ConfirmModal from './components/ConfirmModal.vue'
 import UserSettingsModal from './components/UserSettingsModal.vue'
 import { useNotesStore } from './stores/notes'
 import { useTagsStore } from './stores/tags'
-import { clearStoredEmail, getStoredEmail, setStoredEmail } from './stores/api'
+import { api, clearStoredEmail, getStoredEmail, setStoredEmail } from './stores/api'
 
 const notesStore = useNotesStore()
 const tagsStore = useTagsStore()
@@ -21,6 +21,8 @@ const conflict = ref(false)
 const confirmAction = ref(null)
 const userEmail = ref(getStoredEmail())
 const isSettingsOpen = ref(!userEmail.value)
+const reminderTimer = ref(null)
+const shownReminderKeys = new Set(JSON.parse(localStorage.getItem('shown_reminders') || '[]'))
 const isFirstRun = computed(() => !userEmail.value)
 const activeNotes = computed(() => notesStore.filteredNotes.filter((note) => note.is_active).length)
 const noteEvents = computed(() => notesStore.filteredNotes.map((note) => {
@@ -71,6 +73,25 @@ watch(() => notesStore.selectedTagId, () => notesStore.loadNotes())
 function openCreate(date = '') { editingNote.value = date ? { target_datetime: `${date}T09:00:00` } : null; isModalOpen.value = true }
 function openEdit(note) { editingNote.value = note; isModalOpen.value = true }
 async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(editingNote.value.id, { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
+function persistShownReminder(key) { shownReminderKeys.add(key); localStorage.setItem('shown_reminders', JSON.stringify([...shownReminderKeys])) }
+async function checkReminders() {
+  if (!userEmail.value) return
+  try {
+    const activeNotes = await api('/api/notes?is_active=true')
+    const now = Date.now()
+    for (const note of activeNotes) {
+      for (const reminder of note.reminders || []) {
+        const key = `${note.id}:${reminder.id}:${reminder.remind_at}`
+        if (new Date(reminder.remind_at).getTime() <= now && !shownReminderKeys.has(key)) {
+          persistShownReminder(key)
+          toast.value = `Напоминание: ${note.title}`
+        }
+      }
+    }
+  } catch {
+    // Reminder polling should not interrupt the main note workflow.
+  }
+}
 async function toggleNoteStatus(note) { try { await notesStore.updateNote(note.id, { is_active: !note.is_active, version: note.version }); isModalOpen.value = false; toast.value = note.is_active ? 'Заметка завершена' : 'Заметка возвращена в активные'; await notesStore.loadNotes() } catch (error) { toast.value = error.message } }
 function requestDelete(note) {
   confirmAction.value = { type: 'delete', note, title: 'Переместить заметку в корзину?', message: `Заметка «${note.title}» будет перемещена в корзину.`, confirmLabel: 'Удалить' }
@@ -138,6 +159,11 @@ async function deleteTag() {
 watch(userEmail, (email, previousEmail) => {
   if (email && email !== previousEmail) loadAccountData()
 }, { immediate: true })
+onMounted(() => {
+  checkReminders()
+  reminderTimer.value = window.setInterval(checkReminders, 15000)
+})
+onUnmounted(() => window.clearInterval(reminderTimer.value))
 </script>
 
 <template>

@@ -8,7 +8,12 @@ const props = defineProps({
   conflict: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue', 'save', 'delete', 'toggle-status', 'reload-current'])
-const form = reactive({ title: '', text: '', target_datetime: '', tag_ids: [], repeat: 'none' })
+const reminderOptions = [
+  { offset: 10, label: 'За 10 минут' },
+  { offset: 60, label: 'За 1 час' },
+  { offset: 1440, label: 'За 1 день' },
+]
+const form = reactive({ title: '', text: '', target_datetime: '', tag_ids: [], repeat: 'none', reminderOffsets: [] })
 
 watch(() => props.note, (note) => {
   form.title = note?.title || ''
@@ -16,11 +21,18 @@ watch(() => props.note, (note) => {
   form.target_datetime = note?.target_datetime ? note.target_datetime.slice(0, 16) : ''
   form.tag_ids = note?.tags?.map((tag) => tag.id) || []
   form.repeat = 'none'
+  form.reminderOffsets = note?.reminders?.map((reminder) => reminder.offset_minutes) || []
 }, { immediate: true })
 
 function close() { emit('update:modelValue', false) }
 function submit() {
-  emit('save', { title: form.title.trim(), text: form.text.trim(), target_datetime: form.target_datetime ? new Date(form.target_datetime).toISOString() : null, is_active: props.note?.is_active ?? true, tag_ids: form.tag_ids, reminders: [] })
+  const targetDatetime = form.target_datetime ? new Date(form.target_datetime) : null
+  const reminders = targetDatetime ? form.reminderOffsets.map((offset) => ({
+    offset_minutes: offset,
+    remind_at: new Date(targetDatetime.getTime() - offset * 60 * 1000).toISOString(),
+    is_sent: false,
+  })) : []
+  emit('save', { title: form.title.trim(), text: form.text.trim(), target_datetime: targetDatetime?.toISOString() || null, is_active: props.note?.is_active ?? true, tag_ids: form.tag_ids, reminders })
 }
 </script>
 
@@ -33,6 +45,7 @@ function submit() {
         <label class="field-label">Заголовок<input v-model="form.title" required maxlength="255" placeholder="О чём нужно помнить?" /></label>
         <label class="field-label">Текст заметки<textarea v-model="form.text" rows="5" placeholder="Добавьте детали, контекст или следующий шаг..."></textarea></label>
         <div class="field-grid"><label class="field-label">Дата и время<input v-model="form.target_datetime" type="datetime-local" /></label><label class="field-label">Повторение<select v-model="form.repeat"><option value="none">Не повторять</option><option value="daily">Каждый день</option><option value="weekly">Каждую неделю</option><option value="monthly">Каждый месяц</option></select></label></div>
+        <fieldset class="reminder-picker"><legend>Напоминания</legend><label v-for="option in reminderOptions" :key="option.offset" class="tag-check"><input v-model="form.reminderOffsets" :value="option.offset" type="checkbox" :disabled="!form.target_datetime" />{{ option.label }}</label><span v-if="!form.target_datetime" class="field-hint">Сначала укажите дату и время</span></fieldset>
         <fieldset class="tag-picker"><legend>Теги</legend><label v-for="tag in tags" :key="tag.id" class="tag-check"><input v-model="form.tag_ids" :value="tag.id" type="checkbox" /><span class="tag-dot" :style="{ backgroundColor: tag.color || '#d97757' }"></span>{{ tag.name }}</label><span v-if="!tags.length" class="muted">Теги пока не созданы</span></fieldset>
         <div class="modal-actions"><button v-if="note" class="button button--quiet" type="button" @click="emit('toggle-status', note)">{{ note.is_active ? 'Завершить' : 'Вернуть в активные' }}</button><button v-if="note" class="button button--quiet" type="button" @click="emit('delete', note)">Удалить</button><button class="button button--quiet" type="button" @click="close">Отмена</button><button class="button button--primary" type="submit">{{ note ? 'Сохранить изменения' : 'Создать заметку' }}</button></div>
       </form>
