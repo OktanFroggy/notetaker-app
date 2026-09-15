@@ -7,8 +7,7 @@ export const useNotesStore = defineStore('notes', () => {
   const isLoading = ref(false)
   const error = ref('')
   const selectedTagId = ref(null)
-  const showCompleted = ref(true)
-  const isTrashView = ref(false)
+  const activeTab = ref('calendar')
   const searchQuery = ref('')
   const realtimeEnabled = false
   let socket = null
@@ -36,24 +35,23 @@ export const useNotesStore = defineStore('notes', () => {
 
   const filteredNotes = computed(() => notes.value.filter((note) => {
     const matchesTag = !selectedTagId.value || note.tags?.some((tag) => tag.id === selectedTagId.value)
-    const matchesStatus = showCompleted.value || note.is_active
     const query = searchQuery.value.trim().toLowerCase()
     const matchesSearch = !query || `${note.title} ${note.text}`.toLowerCase().includes(query)
-    return matchesTag && matchesStatus && matchesSearch
+    return matchesTag && matchesSearch
   }))
 
-  async function loadNotes({ trash = isTrashView.value } = {}) {
+  async function loadNotes({ tab = activeTab.value } = {}) {
     isLoading.value = true
     error.value = ''
     try {
-      isTrashView.value = trash
-      if (trash) {
+      activeTab.value = tab
+      if (tab === 'trash') {
         notes.value = await api('/api/notes/trash')
         return
       }
       const params = new URLSearchParams()
       if (selectedTagId.value) params.set('tag_id', selectedTagId.value)
-      if (!showCompleted.value) params.set('is_active', 'true')
+      params.set('is_active', tab === 'completed' ? 'false' : 'true')
       notes.value = await api(`/api/notes?${params}`)
     } catch (requestError) {
       error.value = requestError.message
@@ -81,7 +79,7 @@ export const useNotesStore = defineStore('notes', () => {
   }
 
   async function loadTrash() {
-    await loadNotes({ trash: true })
+    await loadNotes({ tab: 'trash' })
   }
 
   async function restoreNote(id) {
@@ -96,8 +94,10 @@ export const useNotesStore = defineStore('notes', () => {
 
   if (realtimeEnabled) connectWebSocket()
 
+  const isTrashView = computed(() => activeTab.value === 'trash')
+
   return {
-    notes, filteredNotes, isLoading, error, selectedTagId, showCompleted, isTrashView, searchQuery,
+    notes, filteredNotes, isLoading, error, selectedTagId, activeTab, isTrashView, searchQuery,
     loadNotes, loadTrash, createNote, updateNote, deleteNote, restoreNote, permanentlyDeleteNote,
   }
 })
