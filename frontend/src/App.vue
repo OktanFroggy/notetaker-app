@@ -7,6 +7,7 @@ import ruLocale from '@fullcalendar/core/locales/ru'
 import Sidebar from './components/Sidebar.vue'
 import NoteModal from './components/NoteModal.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
+import ReminderModal from './components/ReminderModal.vue'
 import UserSettingsModal from './components/UserSettingsModal.vue'
 import { useNotesStore } from './stores/notes'
 import { useTagsStore } from './stores/tags'
@@ -17,12 +18,14 @@ const tagsStore = useTagsStore()
 const isModalOpen = ref(false)
 const editingNote = ref(null)
 const toast = ref('')
+const reminderToShow = ref(null)
 const conflict = ref(false)
 const confirmAction = ref(null)
 const userEmail = ref(getStoredEmail())
 const isSettingsOpen = ref(!userEmail.value)
 const reminderTimer = ref(null)
 const shownReminderKeys = new Set(JSON.parse(localStorage.getItem('shown_reminders') || '[]'))
+const pendingReminderKeys = new Set()
 const isFirstRun = computed(() => !userEmail.value)
 const activeNotes = computed(() => notesStore.filteredNotes.filter((note) => note.is_active).length)
 const noteEvents = computed(() => notesStore.filteredNotes.map((note) => {
@@ -74,6 +77,12 @@ function openCreate(date = '') { editingNote.value = date ? { target_datetime: `
 function openEdit(note) { editingNote.value = note; isModalOpen.value = true }
 async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(editingNote.value.id, { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
 function persistShownReminder(key) { shownReminderKeys.add(key); localStorage.setItem('shown_reminders', JSON.stringify([...shownReminderKeys])) }
+function closeReminder() {
+  if (!reminderToShow.value) return
+  persistShownReminder(reminderToShow.value.key)
+  pendingReminderKeys.delete(reminderToShow.value.key)
+  reminderToShow.value = null
+}
 async function checkReminders() {
   if (!userEmail.value) return
   try {
@@ -82,9 +91,10 @@ async function checkReminders() {
     for (const note of activeNotes) {
       for (const reminder of note.reminders || []) {
         const key = `${note.id}:${reminder.id}:${reminder.remind_at}`
-        if (new Date(reminder.remind_at).getTime() <= now && !shownReminderKeys.has(key)) {
-          persistShownReminder(key)
-          toast.value = `Напоминание: ${note.title}`
+        if (new Date(reminder.remind_at).getTime() <= now && !shownReminderKeys.has(key) && !pendingReminderKeys.has(key)) {
+          pendingReminderKeys.add(key)
+          reminderToShow.value = { key, note, reminder }
+          return
         }
       }
     }
@@ -196,6 +206,7 @@ onUnmounted(() => window.clearInterval(reminderTimer.value))
       <p v-if="notesStore.activeTab === 'calendar'" class="calendar-hint">Нажмите на свободный день, чтобы создать заметку</p>
     </main>
     <NoteModal v-model="isModalOpen" :note="editingNote" :tags="tagsStore.tags" :conflict="conflict" @save="saveNote" @delete="requestDelete" @toggle-status="toggleNoteStatus" @reload-current="reloadConflict" />
+    <ReminderModal :model-value="Boolean(reminderToShow)" :reminder="reminderToShow" @close="closeReminder" />
     <UserSettingsModal v-model="isSettingsOpen" :first-run="isFirstRun" :current-email="userEmail" @saved="settingsSaved" @switch-account="switchAccount" />
     <ConfirmModal :model-value="Boolean(confirmAction)" :title="confirmAction?.title" :message="confirmAction?.message" :confirm-label="confirmAction?.confirmLabel" @update:model-value="confirmAction = null" @confirm="confirmAction?.type === 'tag' ? deleteTag() : confirmRequestedAction()" />
     <div v-if="toast" class="toast">{{ toast }}</div>

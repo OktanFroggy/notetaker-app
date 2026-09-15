@@ -73,6 +73,8 @@ class NoteBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     text: str = ""
     target_datetime: datetime | None = None
+    repeat: str = Field(default="none", pattern=r"^(none|daily|weekly|monthly)$")
+    repeat_until: datetime | None = None
     is_active: bool = True
 
 

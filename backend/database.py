@@ -38,6 +38,15 @@ def add_missing_user_email_columns() -> None:
                     )
                 )
 
+        if inspector.has_table("notes"):
+            columns = {column["name"] for column in inspector.get_columns("notes")}
+            if "repeat" not in columns:
+                connection.execute(
+                    text("ALTER TABLE notes ADD COLUMN repeat VARCHAR(20) NOT NULL DEFAULT 'none'")
+                )
+            if "repeat_until" not in columns:
+                connection.execute(text("ALTER TABLE notes ADD COLUMN repeat_until TIMESTAMP WITH TIME ZONE"))
+
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()

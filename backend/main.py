@@ -237,6 +237,8 @@ async def create_note(
         title=note_data.title,
         text=note_data.text,
         target_datetime=note_data.target_datetime,
+        repeat=note_data.repeat,
+        repeat_until=note_data.repeat_until,
         is_active=note_data.is_active,
         tags=resolve_tags(note_data.tag_ids, current_email, db),
     )

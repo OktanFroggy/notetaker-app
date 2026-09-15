@@ -41,6 +41,8 @@ class Note(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     target_datetime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    repeat: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
+    repeat_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
