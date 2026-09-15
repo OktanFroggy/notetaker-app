@@ -1,0 +1,239 @@
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from database import Base, SessionLocal, engine, get_db
+import models
+from schemas import (
+    NoteCreate,
+    NoteResponse,
+    NoteUpdate,
+    TagCreate,
+    TagResponse,
+)
+
+
+Base.metadata.create_all(bind=engine)
+
+
+class ConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, event: str, payload: dict[str, Any]) -> None:
+        message = {"event": event, **payload}
+        disconnected = []
+        for websocket in self.active_connections:
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                disconnected.append(websocket)
+        for websocket in disconnected:
+            self.disconnect(websocket)
+
+
+manager = ConnectionManager()
+
+
+def note_payload(note: models.Note) -> dict[str, Any]:
+    return NoteResponse.model_validate(note).model_dump(mode="json")
+
+
+def purge_deleted_notes() -> list[int]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    with SessionLocal() as db:
+        notes = list(db.scalars(select(models.Note).where(models.Note.deleted_at < cutoff)).all())
+        note_ids = [note.id for note in notes]
+        for note in notes:
+            db.delete(note)
+        db.commit()
+        return note_ids
+
+
+async def cleanup_loop() -> None:
+    while True:
+        for note_id in purge_deleted_notes():
+            await manager.broadcast("note_deleted", {"note_id": note_id})
+        await asyncio.sleep(24 * 60 * 60)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    cleanup_task = asyncio.create_task(cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        await asyncio.gather(cleanup_task, return_exceptions=True)
+
+
+app = FastAPI(title="Notetaker API", lifespan=lifespan)
+
+
+@app.get("/")
+def read_root() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+def get_note_or_404(note_id: int, db: Session) -> models.Note:
+    note = db.get(models.Note, note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+def resolve_tags(tag_ids: list[int], db: Session) -> list[models.Tag]:
+    if not tag_ids:
+        return []
+    tags = list(db.scalars(select(models.Tag).where(models.Tag.id.in_(tag_ids))).all())
+    if len(tags) != len(set(tag_ids)):
+        raise HTTPException(status_code=404, detail="One or more tags not found")
+    return tags
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+@app.get("/api/notes", response_model=list[NoteResponse])
+def list_notes(
+    tag_id: int | None = None,
+    is_active: bool | None = None,
+    target_from: datetime | None = Query(default=None),
+    target_to: datetime | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[models.Note]:
+    query = select(models.Note).where(models.Note.deleted_at.is_(None))
+    if tag_id is not None:
+        query = query.join(models.Note.tags).where(models.Tag.id == tag_id)
+    if is_active is not None:
+        query = query.where(models.Note.is_active == is_active)
+    if target_from is not None:
+        query = query.where(models.Note.target_datetime >= target_from)
+    if target_to is not None:
+        query = query.where(models.Note.target_datetime <= target_to)
+    return list(db.scalars(query.order_by(models.Note.updated_at.desc())).unique().all())
+
+
+@app.get("/api/notes/trash", response_model=list[NoteResponse])
+def list_deleted_notes(db: Session = Depends(get_db)) -> list[models.Note]:
+    query = select(models.Note).where(models.Note.deleted_at.is_not(None))
+    return list(db.scalars(query.order_by(models.Note.updated_at.desc())).unique().all())
+
+
+@app.post("/api/notes", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
+async def create_note(note_data: NoteCreate, db: Session = Depends(get_db)) -> models.Note:
+    note = models.Note(
+        title=note_data.title,
+        text=note_data.text,
+        target_datetime=note_data.target_datetime,
+        is_active=note_data.is_active,
+        tags=resolve_tags(note_data.tag_ids, db),
+    )
+    note.reminders = [models.Reminder(**reminder.model_dump()) for reminder in note_data.reminders]
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    await manager.broadcast("note_created", {"note": note_payload(note)})
+    return note
+
+
+@app.put("/api/notes/{note_id}", response_model=NoteResponse)
+async def update_note(note_id: int, note_data: NoteUpdate, db: Session = Depends(get_db)) -> models.Note:
+    note = get_note_or_404(note_id, db)
+    if note.version != note_data.version:
+        raise HTTPException(status_code=409, detail="Note version conflict")
+    updates = note_data.model_dump(exclude_unset=True, exclude={"version", "tag_ids", "reminders"})
+    for field, value in updates.items():
+        setattr(note, field, value)
+    if note_data.tag_ids is not None:
+        note.tags = resolve_tags(note_data.tag_ids, db)
+    if note_data.reminders is not None:
+        note.reminders.clear()
+        note.reminders.extend(
+            models.Reminder(**reminder.model_dump()) for reminder in note_data.reminders
+        )
+    note.version += 1
+    db.commit()
+    db.refresh(note)
+    await manager.broadcast("note_updated", {"note": note_payload(note)})
+    return note
+
+
+@app.delete("/api/notes/{note_id}", response_model=NoteResponse)
+async def delete_note(note_id: int, db: Session = Depends(get_db)) -> models.Note:
+    note = get_note_or_404(note_id, db)
+    note.deleted_at = datetime.now().astimezone()
+    note.is_active = False
+    note.version += 1
+    db.commit()
+    db.refresh(note)
+    await manager.broadcast("note_deleted", {"note": note_payload(note)})
+    return note
+
+
+@app.post("/api/notes/{note_id}/restore", response_model=NoteResponse)
+async def restore_note(note_id: int, db: Session = Depends(get_db)) -> models.Note:
+    note = get_note_or_404(note_id, db)
+    note.deleted_at = None
+    note.is_active = True
+    note.version += 1
+    db.commit()
+    db.refresh(note)
+    await manager.broadcast("note_updated", {"note": note_payload(note)})
+    return note
+
+
+@app.delete("/api/notes/{note_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def permanently_delete_note(note_id: int, db: Session = Depends(get_db)) -> None:
+    note = get_note_or_404(note_id, db)
+    db.delete(note)
+    db.commit()
+    await manager.broadcast("note_deleted", {"note_id": note_id})
+
+
+@app.get("/api/tags", response_model=list[TagResponse])
+def list_tags(db: Session = Depends(get_db)) -> list[models.Tag]:
+    return list(db.scalars(select(models.Tag).order_by(models.Tag.name)).all())
+
+
+@app.post("/api/tags", response_model=TagResponse, status_code=status.HTTP_201_CREATED)
+def create_tag(tag_data: TagCreate, db: Session = Depends(get_db)) -> models.Tag:
+    tag = models.Tag(**tag_data.model_dump())
+    db.add(tag)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Tag already exists") from None
+    db.refresh(tag)
+    return tag
+
+
+@app.delete("/api/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_tag(tag_id: int, db: Session = Depends(get_db)) -> None:
+    tag = db.get(models.Tag, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.delete(tag)
+    db.commit()

@@ -1,0 +1,5 @@
+# Архитектурные решения проекта Notetaker
+
+1. Отказ от Docker Desktop в пользу локальной связки (Python + Node.js + PostgreSQL) согласно ТЗ.
+2. Режим единого пользователя (Single-user mode) без сложной JWT-авторизации.
+3. Стек: FastAPI, SQLAlchemy, PostgreSQL (notetaker_db), Vue 3 (Vite + Pinia + FullCalendar).
