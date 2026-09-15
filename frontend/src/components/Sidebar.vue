@@ -9,18 +9,23 @@ const props = defineProps({
   noteCount: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['select-tag', 'select-calendar', 'toggle-completed', 'new-note', 'open-trash', 'add-tag'])
+const emit = defineEmits(['select-tag', 'select-calendar', 'toggle-completed', 'new-note', 'open-trash', 'add-tag', 'update-tag', 'delete-tag'])
 const tagName = ref('')
+const tagColor = ref('#3B82F6')
+const editingTagId = ref(null)
 const showTagInput = ref(false)
 
 function chooseTag(id) { emit('select-tag', id) }
 function addTag() {
   if (tagName.value.trim()) {
-    emit('add-tag', { name: tagName.value.trim(), color: '#d97757' })
-    tagName.value = ''
-    showTagInput.value = false
+    const payload = { name: tagName.value.trim(), color: tagColor.value }
+    emit(editingTagId.value ? 'update-tag' : 'add-tag', editingTagId.value ? { id: editingTagId.value, ...payload } : payload)
+    closeTagForm()
   }
 }
+function editTag(tag) { editingTagId.value = tag.id; tagName.value = tag.name; tagColor.value = tag.color || '#3B82F6'; showTagInput.value = true }
+function closeTagForm() { tagName.value = ''; tagColor.value = '#3B82F6'; editingTagId.value = null; showTagInput.value = false }
+function requestDeleteTag(tag) { emit('delete-tag', tag) }
 </script>
 
 <template>
@@ -35,9 +40,9 @@ function addTag() {
 
     <div class="sidebar-section">
       <div class="section-heading"><span>Теги</span><button class="icon-button" type="button" title="Добавить тег" @click="showTagInput = !showTagInput">+</button></div>
-      <form v-if="showTagInput" class="tag-form" @submit.prevent="addTag"><input v-model="tagName" autofocus placeholder="Название тега" /><button type="submit">Добавить</button></form>
+      <form v-if="showTagInput" class="tag-form" @submit.prevent="addTag"><input v-model="tagName" autofocus placeholder="Название тега" /><label class="tag-color-picker" title="Цвет тега"><input v-model="tagColor" type="color" /></label><button type="submit">{{ editingTagId ? 'Сохранить' : 'Добавить' }}</button><button class="tag-form-cancel" type="button" @click="closeTagForm">×</button></form>
       <button class="tag-item tag-item--all" :class="{ 'tag-item--selected': !selectedTagId }" type="button" @click="chooseTag(null)"><span class="tag-dot tag-dot--all">•</span> Все заметки <span class="tag-count">{{ noteCount }}</span></button>
-      <button v-for="tag in tags" :key="tag.id" class="tag-item" :class="{ 'tag-item--selected': selectedTagId === tag.id }" type="button" @click="chooseTag(tag.id)"><span class="tag-dot" :style="{ backgroundColor: tag.color || '#d97757' }"></span>{{ tag.name }}</button>
+      <div v-for="tag in tags" :key="tag.id" class="tag-row"><button class="tag-item" :class="{ 'tag-item--selected': selectedTagId === tag.id }" type="button" @click="chooseTag(tag.id)"><span class="tag-dot" :style="{ backgroundColor: tag.color || '#3B82F6' }"></span>{{ tag.name }}</button><button class="tag-edit" type="button" title="Изменить тег" @click="editTag(tag)">✎</button><button class="tag-delete" type="button" title="Удалить тег" @click="requestDeleteTag(tag)">×</button></div>
     </div>
 
     <label class="sidebar-toggle"><input :checked="showCompleted" type="checkbox" @change="emit('toggle-completed', $event.target.checked)" /><span class="toggle-track"></span><span>Показывать выполненные</span></label>

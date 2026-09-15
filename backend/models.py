@@ -27,7 +27,7 @@ class Tag(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
-    color: Mapped[str | None] = mapped_column(String(7))
+    color: Mapped[str] = mapped_column(String(7), nullable=False, default="#3B82F6")
     notes: Mapped[list["Note"]] = relationship(secondary=note_tags, back_populates="tags")
 
 

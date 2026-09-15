@@ -32,11 +32,26 @@ export const useTagsStore = defineStore('tags', () => {
     return tag
   }
 
+  async function updateTag(id, payload) {
+    const response = await fetch(`/api/tags/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!response.ok) throw new Error('Не удалось обновить тег')
+    const updatedTag = await response.json()
+    const index = tags.value.findIndex((tag) => tag.id === id)
+    if (index !== -1) tags.value[index] = updatedTag
+    tags.value.sort((left, right) => left.name.localeCompare(right.name))
+    return updatedTag
+  }
+
   async function deleteTag(id) {
     const response = await fetch(`/api/tags/${id}`, { method: 'DELETE' })
     if (!response.ok) throw new Error('Не удалось удалить тег')
     tags.value = tags.value.filter((tag) => tag.id !== id)
+    return id
   }
 
-  return { tags, isLoading, error, loadTags, createTag, deleteTag }
+  return { tags, isLoading, error, loadTags, createTag, updateTag, deleteTag }
 })

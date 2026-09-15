@@ -5,11 +5,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class TagBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    color: str | None = Field(default=None, max_length=7)
+    color: str = Field(default="#3B82F6", pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class TagCreate(TagBase):
     pass
+
+
+class TagUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class TagResponse(TagBase):

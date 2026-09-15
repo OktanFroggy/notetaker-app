@@ -16,6 +16,7 @@ from schemas import (
     NoteUpdate,
     TagCreate,
     TagResponse,
+    TagUpdate,
 )
 
 
@@ -230,10 +231,27 @@ def create_tag(tag_data: TagCreate, db: Session = Depends(get_db)) -> models.Tag
     return tag
 
 
+@app.put("/api/tags/{tag_id}", response_model=TagResponse)
+def update_tag(tag_id: int, tag_data: TagUpdate, db: Session = Depends(get_db)) -> models.Tag:
+    tag = db.get(models.Tag, tag_id)
+    if tag is None:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    for field, value in tag_data.model_dump(exclude_unset=True).items():
+        setattr(tag, field, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Tag already exists") from None
+    db.refresh(tag)
+    return tag
+
+
 @app.delete("/api/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_tag(tag_id: int, db: Session = Depends(get_db)) -> None:
     tag = db.get(models.Tag, tag_id)
     if tag is None:
         raise HTTPException(status_code=404, detail="Tag not found")
+    tag.notes.clear()
     db.delete(tag)
     db.commit()

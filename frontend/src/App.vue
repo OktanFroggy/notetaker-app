@@ -18,13 +18,19 @@ const toast = ref('')
 const conflict = ref(false)
 const confirmAction = ref(null)
 const activeNotes = computed(() => notesStore.filteredNotes.filter((note) => note.is_active).length)
-const noteEvents = computed(() => notesStore.filteredNotes.map((note) => ({
-  title: note.title,
-  start: note.date_time || note.created_at || note.target_datetime,
-  id: note.id,
-  classNames: note.is_active ? ['note-event'] : ['note-event', 'note-event--done'],
-  extendedProps: { note },
-})))
+const noteEvents = computed(() => notesStore.filteredNotes.map((note) => {
+  const eventColor = note.tags?.[0]?.color || '#3B82F6'
+  return {
+    title: note.title,
+    start: note.date_time || note.created_at || note.target_datetime,
+    id: note.id,
+    backgroundColor: eventColor,
+    borderColor: eventColor,
+    color: '#FFFFFF',
+    classNames: note.is_active ? ['note-event'] : ['note-event', 'note-event--done'],
+    extendedProps: { note },
+  }
+}))
 const calendarOptions = computed(() => ({
   initialView: 'dayGridMonth',
   plugins: [dayGridPlugin, interactionPlugin],
@@ -80,12 +86,35 @@ async function openTrash() { await notesStore.loadTrash() }
 async function openCalendar() { await notesStore.loadNotes({ trash: false }) }
 async function reloadConflict() { await notesStore.loadNotes(); editingNote.value = notesStore.notes.find((note) => note.id === editingNote.value?.id) || null; conflict.value = false }
 async function addTag(payload) { try { await tagsStore.createTag(payload) } catch (error) { toast.value = error.message } }
+async function updateTag(payload) { try { await tagsStore.updateTag(payload.id, { name: payload.name, color: payload.color }) } catch (error) { toast.value = error.message } }
+function requestDeleteTag(tag) {
+  confirmAction.value = {
+    type: 'tag',
+    tag,
+    title: 'Удалить тег?',
+    message: `Тег «${tag.name}» будет удалён и отвязан от всех заметок.`,
+    confirmLabel: 'Удалить тег',
+  }
+}
+async function deleteTag() {
+  const tag = confirmAction.value?.tag
+  if (!tag) return
+  try {
+    await tagsStore.deleteTag(tag.id)
+    if (notesStore.selectedTagId === tag.id) notesStore.selectedTagId = null
+    await notesStore.loadNotes()
+    confirmAction.value = null
+    toast.value = 'Тег удалён'
+  } catch (error) {
+    toast.value = error.message
+  }
+}
 Promise.all([notesStore.loadNotes(), tagsStore.loadTags()])
 </script>
 
 <template>
   <div class="app-shell">
-    <Sidebar :tags="tagsStore.tags" :selected-tag-id="notesStore.selectedTagId" :show-completed="notesStore.showCompleted" :is-trash-view="notesStore.isTrashView" :note-count="notesStore.notes.length" @new-note="openCreate()" @open-trash="openTrash" @select-calendar="openCalendar" @select-tag="notesStore.selectedTagId = $event" @toggle-completed="notesStore.showCompleted = $event" @add-tag="addTag" />
+    <Sidebar :tags="tagsStore.tags" :selected-tag-id="notesStore.selectedTagId" :show-completed="notesStore.showCompleted" :is-trash-view="notesStore.isTrashView" :note-count="notesStore.notes.length" @new-note="openCreate()" @open-trash="openTrash" @select-calendar="openCalendar" @select-tag="notesStore.selectedTagId = $event" @toggle-completed="notesStore.showCompleted = $event" @add-tag="addTag" @update-tag="updateTag" @delete-tag="requestDeleteTag" />
     <main class="main-content">
       <header class="topbar"><div><p class="eyebrow">Рабочее пространство</p><h1>Мои заметки</h1></div><div class="topbar-actions"><label class="search"><span>⌕</span><input v-model="notesStore.searchQuery" placeholder="Поиск заметок" /></label><button class="avatar" type="button">Ф</button></div></header>
       <section class="calendar-toolbar"><div class="calendar-summary"><span class="summary-dot"></span>{{ activeNotes }} активных заметок</div></section>
@@ -98,6 +127,7 @@ Promise.all([notesStore.loadNotes(), tagsStore.loadTags()])
             <div class="trash-card__body">
               <h2>{{ note.title }}</h2>
               <p>{{ note.text || 'Без текста' }}</p>
+              <div v-if="note.tags?.length" class="note-tags" style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px;" aria-label="Теги заметки"><span v-for="tag in note.tags" :key="tag.id" class="note-tag" :style="{ color: tag.color || '#3B82F6', border: `1px solid ${tag.color || '#3B82F6'}`, borderRadius: '999px', padding: '3px 8px', backgroundColor: `${tag.color || '#3B82F6'}18`, fontSize: '10px', fontWeight: '700' }">{{ tag.name }}</span></div>
               <time :datetime="note.target_datetime || note.deleted_at || note.updated_at">{{ new Date(note.target_datetime || note.deleted_at || note.updated_at).toLocaleString('ru-RU') }}</time>
             </div>
             <div class="trash-card__actions">
@@ -110,7 +140,7 @@ Promise.all([notesStore.loadNotes(), tagsStore.loadTags()])
       <p v-if="!notesStore.isTrashView" class="calendar-hint">Нажмите на свободный день, чтобы создать заметку</p>
     </main>
     <NoteModal v-model="isModalOpen" :note="editingNote" :tags="tagsStore.tags" :conflict="conflict" @save="saveNote" @delete="requestDelete" @reload-current="reloadConflict" />
-    <ConfirmModal :model-value="Boolean(confirmAction)" :title="confirmAction?.title" :message="confirmAction?.message" :confirm-label="confirmAction?.confirmLabel" @update:model-value="confirmAction = null" @confirm="confirmRequestedAction" />
+    <ConfirmModal :model-value="Boolean(confirmAction)" :title="confirmAction?.title" :message="confirmAction?.message" :confirm-label="confirmAction?.confirmLabel" @update:model-value="confirmAction = null" @confirm="confirmAction?.type === 'tag' ? deleteTag() : confirmRequestedAction()" />
     <div v-if="toast" class="toast">{{ toast }}</div>
   </div>
 </template>
