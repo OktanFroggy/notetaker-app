@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { api } from './api'
 
 export const useTagsStore = defineStore('tags', () => {
   const tags = ref([])
@@ -9,9 +10,7 @@ export const useTagsStore = defineStore('tags', () => {
   async function loadTags() {
     isLoading.value = true
     try {
-      const response = await fetch('/api/tags')
-      if (!response.ok) throw new Error('Не удалось загрузить теги')
-      tags.value = await response.json()
+      tags.value = await api('/api/tags')
     } catch (requestError) {
       error.value = requestError.message
     } finally {
@@ -20,26 +19,20 @@ export const useTagsStore = defineStore('tags', () => {
   }
 
   async function createTag(payload) {
-    const response = await fetch('/api/tags', {
+    const tag = await api('/api/tags', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    if (!response.ok) throw new Error('Не удалось создать тег')
-    const tag = await response.json()
     tags.value.push(tag)
     tags.value.sort((left, right) => left.name.localeCompare(right.name))
     return tag
   }
 
   async function updateTag(id, payload) {
-    const response = await fetch(`/api/tags/${id}`, {
+    const updatedTag = await api(`/api/tags/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    if (!response.ok) throw new Error('Не удалось обновить тег')
-    const updatedTag = await response.json()
     const index = tags.value.findIndex((tag) => tag.id === id)
     if (index !== -1) tags.value[index] = updatedTag
     tags.value.sort((left, right) => left.name.localeCompare(right.name))
@@ -47,8 +40,7 @@ export const useTagsStore = defineStore('tags', () => {
   }
 
   async function deleteTag(id) {
-    const response = await fetch(`/api/tags/${id}`, { method: 'DELETE' })
-    if (!response.ok) throw new Error('Не удалось удалить тег')
+    await api(`/api/tags/${id}`, { method: 'DELETE' })
     tags.value = tags.value.filter((tag) => tag.id !== id)
     return id
   }

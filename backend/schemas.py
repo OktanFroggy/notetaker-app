@@ -3,6 +3,19 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class UserSettingsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    timezone: str
+
+
+class UserSettingsUpdate(BaseModel):
+    email: str = Field(min_length=1, max_length=255)
+    timezone: str = Field(min_length=1, max_length=64)
+
+
 class TagBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     color: str = Field(default="#3B82F6", pattern=r"^#[0-9A-Fa-f]{6}$")

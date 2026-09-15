@@ -19,6 +19,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True, default="user@example.com")
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
 
 
@@ -26,6 +27,7 @@ class Tag(Base):
     __tablename__ = "tags"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True, default="user@example.com")
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     color: Mapped[str] = mapped_column(String(7), nullable=False, default="#3B82F6")
     notes: Mapped[list["Note"]] = relationship(secondary=note_tags, back_populates="tags")
@@ -35,6 +37,7 @@ class Note(Base):
     __tablename__ = "notes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True, default="user@example.com")
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     target_datetime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

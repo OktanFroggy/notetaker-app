@@ -1,19 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-
-const api = async (path, options = {}) => {
-  const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  })
-  if (!response.ok) {
-    const detail = await response.json().catch(() => ({}))
-    const requestError = new Error(detail.detail || 'Не удалось выполнить запрос')
-    requestError.status = response.status
-    throw requestError
-  }
-  return response.status === 204 ? null : response.json()
-}
+import { api } from './api'
 
 export const useNotesStore = defineStore('notes', () => {
   const notes = ref([])

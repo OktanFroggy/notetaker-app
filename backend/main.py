@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -17,10 +17,22 @@ from schemas import (
     TagCreate,
     TagResponse,
     TagUpdate,
+    UserSettingsResponse,
+    UserSettingsUpdate,
 )
 
 
 Base.metadata.create_all(bind=engine)
+from database import add_missing_user_email_columns
+
+add_missing_user_email_columns()
+
+
+def ensure_default_user_settings() -> None:
+    with SessionLocal() as db:
+        if db.scalar(select(models.User).where(models.User.email == "user@example.com")) is None:
+            db.add(models.User(email="user@example.com", user_email="user@example.com", timezone="UTC"))
+            db.commit()
 
 
 class ConnectionManager:
@@ -74,6 +86,7 @@ async def cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    ensure_default_user_settings()
     cleanup_task = asyncio.create_task(cleanup_loop())
     try:
         yield
@@ -90,17 +103,68 @@ def read_root() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def get_note_or_404(note_id: int, db: Session) -> models.Note:
-    note = db.get(models.Note, note_id)
+def get_current_email(x_user_email: str | None = Header(default=None)) -> str:
+    email = (x_user_email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="User email is required")
+    return email
+
+
+def get_user_settings(db: Session, current_email: str) -> models.User:
+    user = db.scalar(select(models.User).where(models.User.email == current_email))
+    if user is None:
+        user = models.User(email=current_email, user_email=current_email, timezone="UTC")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    return user
+
+
+@app.get("/api/user/settings", response_model=UserSettingsResponse)
+def read_user_settings(
+    current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> models.User:
+    return get_user_settings(db, current_email)
+
+
+@app.put("/api/user/settings", response_model=UserSettingsResponse)
+def update_user_settings(
+    settings_data: UserSettingsUpdate,
+    current_email: str = Depends(get_current_email),
+    db: Session = Depends(get_db),
+) -> models.User:
+    user = get_user_settings(db, current_email)
+    user.email = settings_data.email
+    user.user_email = settings_data.email
+    user.timezone = settings_data.timezone
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email already exists") from None
+    db.refresh(user)
+    return user
+
+
+def get_note_or_404(note_id: int, current_email: str, db: Session) -> models.Note:
+    note = db.scalar(
+        select(models.Note).where(models.Note.id == note_id, models.Note.user_email == current_email)
+    )
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
     return note
 
 
-def resolve_tags(tag_ids: list[int], db: Session) -> list[models.Tag]:
+def resolve_tags(tag_ids: list[int], current_email: str, db: Session) -> list[models.Tag]:
     if not tag_ids:
         return []
-    tags = list(db.scalars(select(models.Tag).where(models.Tag.id.in_(tag_ids))).all())
+    tags = list(
+        db.scalars(
+            select(models.Tag).where(
+                models.Tag.id.in_(tag_ids), models.Tag.user_email == current_email
+            )
+        ).all()
+    )
     if len(tags) != len(set(tag_ids)):
         raise HTTPException(status_code=404, detail="One or more tags not found")
     return tags
@@ -122,9 +186,12 @@ def list_notes(
     is_active: bool | None = None,
     target_from: datetime | None = Query(default=None),
     target_to: datetime | None = Query(default=None),
+    current_email: str = Depends(get_current_email),
     db: Session = Depends(get_db),
 ) -> list[models.Note]:
-    query = select(models.Note).where(models.Note.deleted_at.is_(None))
+    query = select(models.Note).where(
+        models.Note.deleted_at.is_(None), models.Note.user_email == current_email
+    )
     if tag_id is not None:
         query = query.join(models.Note.tags).where(models.Tag.id == tag_id)
     if is_active is not None:
@@ -137,19 +204,28 @@ def list_notes(
 
 
 @app.get("/api/notes/trash", response_model=list[NoteResponse])
-def list_deleted_notes(db: Session = Depends(get_db)) -> list[models.Note]:
-    query = select(models.Note).where(models.Note.deleted_at.is_not(None))
+def list_deleted_notes(
+    current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> list[models.Note]:
+    query = select(models.Note).where(
+        models.Note.deleted_at.is_not(None), models.Note.user_email == current_email
+    )
     return list(db.scalars(query.order_by(models.Note.updated_at.desc())).unique().all())
 
 
 @app.post("/api/notes", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
-async def create_note(note_data: NoteCreate, db: Session = Depends(get_db)) -> models.Note:
+async def create_note(
+    note_data: NoteCreate,
+    current_email: str = Depends(get_current_email),
+    db: Session = Depends(get_db),
+) -> models.Note:
     note = models.Note(
+        user_email=current_email,
         title=note_data.title,
         text=note_data.text,
         target_datetime=note_data.target_datetime,
         is_active=note_data.is_active,
-        tags=resolve_tags(note_data.tag_ids, db),
+        tags=resolve_tags(note_data.tag_ids, current_email, db),
     )
     note.reminders = [models.Reminder(**reminder.model_dump()) for reminder in note_data.reminders]
     db.add(note)
@@ -160,15 +236,20 @@ async def create_note(note_data: NoteCreate, db: Session = Depends(get_db)) -> m
 
 
 @app.put("/api/notes/{note_id}", response_model=NoteResponse)
-async def update_note(note_id: int, note_data: NoteUpdate, db: Session = Depends(get_db)) -> models.Note:
-    note = get_note_or_404(note_id, db)
+async def update_note(
+    note_id: int,
+    note_data: NoteUpdate,
+    current_email: str = Depends(get_current_email),
+    db: Session = Depends(get_db),
+) -> models.Note:
+    note = get_note_or_404(note_id, current_email, db)
     if note.version != note_data.version:
         raise HTTPException(status_code=409, detail="Note version conflict")
     updates = note_data.model_dump(exclude_unset=True, exclude={"version", "tag_ids", "reminders"})
     for field, value in updates.items():
         setattr(note, field, value)
     if note_data.tag_ids is not None:
-        note.tags = resolve_tags(note_data.tag_ids, db)
+        note.tags = resolve_tags(note_data.tag_ids, current_email, db)
     if note_data.reminders is not None:
         note.reminders.clear()
         note.reminders.extend(
@@ -182,8 +263,10 @@ async def update_note(note_id: int, note_data: NoteUpdate, db: Session = Depends
 
 
 @app.delete("/api/notes/{note_id}", response_model=NoteResponse)
-async def delete_note(note_id: int, db: Session = Depends(get_db)) -> models.Note:
-    note = get_note_or_404(note_id, db)
+async def delete_note(
+    note_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> models.Note:
+    note = get_note_or_404(note_id, current_email, db)
     note.deleted_at = datetime.now().astimezone()
     note.is_active = False
     note.version += 1
@@ -194,8 +277,10 @@ async def delete_note(note_id: int, db: Session = Depends(get_db)) -> models.Not
 
 
 @app.post("/api/notes/{note_id}/restore", response_model=NoteResponse)
-async def restore_note(note_id: int, db: Session = Depends(get_db)) -> models.Note:
-    note = get_note_or_404(note_id, db)
+async def restore_note(
+    note_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> models.Note:
+    note = get_note_or_404(note_id, current_email, db)
     note.deleted_at = None
     note.is_active = True
     note.version += 1
@@ -206,21 +291,35 @@ async def restore_note(note_id: int, db: Session = Depends(get_db)) -> models.No
 
 
 @app.delete("/api/notes/{note_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
-async def permanently_delete_note(note_id: int, db: Session = Depends(get_db)) -> None:
-    note = get_note_or_404(note_id, db)
+async def permanently_delete_note(
+    note_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> None:
+    note = get_note_or_404(note_id, current_email, db)
     db.delete(note)
     db.commit()
     await manager.broadcast("note_deleted", {"note_id": note_id})
 
 
 @app.get("/api/tags", response_model=list[TagResponse])
-def list_tags(db: Session = Depends(get_db)) -> list[models.Tag]:
-    return list(db.scalars(select(models.Tag).order_by(models.Tag.name)).all())
+def list_tags(
+    current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> list[models.Tag]:
+    return list(
+        db.scalars(
+            select(models.Tag)
+            .where(models.Tag.user_email == current_email)
+            .order_by(models.Tag.name)
+        ).all()
+    )
 
 
 @app.post("/api/tags", response_model=TagResponse, status_code=status.HTTP_201_CREATED)
-def create_tag(tag_data: TagCreate, db: Session = Depends(get_db)) -> models.Tag:
-    tag = models.Tag(**tag_data.model_dump())
+def create_tag(
+    tag_data: TagCreate,
+    current_email: str = Depends(get_current_email),
+    db: Session = Depends(get_db),
+) -> models.Tag:
+    tag = models.Tag(user_email=current_email, **tag_data.model_dump())
     db.add(tag)
     try:
         db.commit()
@@ -232,8 +331,15 @@ def create_tag(tag_data: TagCreate, db: Session = Depends(get_db)) -> models.Tag
 
 
 @app.put("/api/tags/{tag_id}", response_model=TagResponse)
-def update_tag(tag_id: int, tag_data: TagUpdate, db: Session = Depends(get_db)) -> models.Tag:
-    tag = db.get(models.Tag, tag_id)
+def update_tag(
+    tag_id: int,
+    tag_data: TagUpdate,
+    current_email: str = Depends(get_current_email),
+    db: Session = Depends(get_db),
+) -> models.Tag:
+    tag = db.scalar(
+        select(models.Tag).where(models.Tag.id == tag_id, models.Tag.user_email == current_email)
+    )
     if tag is None:
         raise HTTPException(status_code=404, detail="Tag not found")
     for field, value in tag_data.model_dump(exclude_unset=True).items():
@@ -248,8 +354,12 @@ def update_tag(tag_id: int, tag_data: TagUpdate, db: Session = Depends(get_db)) 
 
 
 @app.delete("/api/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_tag(tag_id: int, db: Session = Depends(get_db)) -> None:
-    tag = db.get(models.Tag, tag_id)
+def delete_tag(
+    tag_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+) -> None:
+    tag = db.scalar(
+        select(models.Tag).where(models.Tag.id == tag_id, models.Tag.user_email == current_email)
+    )
     if tag is None:
         raise HTTPException(status_code=404, detail="Tag not found")
     tag.notes.clear()
