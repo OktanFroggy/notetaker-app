@@ -1,6 +1,17 @@
 from datetime import datetime
+import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def normalize_email(value: str) -> str:
+    email = value.strip().lower()
+    if not EMAIL_PATTERN.fullmatch(email):
+        raise ValueError("Некорректный формат email")
+    return email
 
 
 class UserSettingsResponse(BaseModel):
@@ -14,6 +25,11 @@ class UserSettingsResponse(BaseModel):
 class UserSettingsUpdate(BaseModel):
     email: str = Field(min_length=1, max_length=255)
     timezone: str = Field(min_length=1, max_length=64)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        return normalize_email(value)
 
 
 class TagBase(BaseModel):

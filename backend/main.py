@@ -3,7 +3,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -19,6 +22,7 @@ from schemas import (
     TagUpdate,
     UserSettingsResponse,
     UserSettingsUpdate,
+    normalize_email,
 )
 
 
@@ -98,16 +102,25 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Notetaker API", lifespan=lifespan)
 
 
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, exc: RequestValidationError):
+    if any("email" in error.get("loc", ()) for error in exc.errors()):
+        return JSONResponse(status_code=400, content={"detail": "Некорректный формат email"})
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {"status": "ok"}
 
 
 def get_current_email(x_user_email: str | None = Header(default=None)) -> str:
-    email = (x_user_email or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="User email is required")
-    return email
+    if not x_user_email:
+        raise HTTPException(status_code=400, detail="Некорректный формат email")
+    try:
+        return normalize_email(x_user_email)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Некорректный формат email") from None
 
 
 def get_user_settings(db: Session, current_email: str) -> models.User:

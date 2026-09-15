@@ -12,6 +12,8 @@ const form = reactive({ email: '', timezone: 'UTC' })
 const isLoading = ref(false)
 const isSaving = ref(false)
 const error = ref('')
+const emailTouched = ref(false)
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const timezones = [
   'UTC',
   'Europe/London',
@@ -27,6 +29,7 @@ const timezones = [
   'America/Los_Angeles',
 ]
 const timezoneOptions = computed(() => [...new Set([...timezones, form.timezone])])
+const isEmailValid = computed(() => emailPattern.test(form.email.trim()))
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -66,14 +69,16 @@ async function loadSettings() {
 function close() { emit('update:modelValue', false) }
 
 async function submit() {
+  emailTouched.value = true
+  if (!isEmailValid.value) return
   isSaving.value = true
   error.value = ''
   try {
-    await request('/api/user/settings', {
+    const settings = await request('/api/user/settings', {
       method: 'PUT',
       body: JSON.stringify({ email: form.email.trim(), timezone: form.timezone }),
     })
-    emit('saved', form.email.trim())
+    emit('saved', settings.email)
     close()
   } catch (requestError) {
     error.value = requestError.message
@@ -97,9 +102,9 @@ watch(() => [props.modelValue, props.firstRun], ([isOpen]) => {
       <div v-if="isLoading" class="settings-status">Загрузка настроек...</div>
       <form v-else @submit.prevent="submit">
         <div v-if="error" class="settings-error" role="alert">{{ error }}</div>
-        <label class="field-label">Email пользователя<input v-model="form.email" type="email" required maxlength="255" autocomplete="email" /></label>
+        <label class="field-label">Email пользователя<input v-model="form.email" type="email" required maxlength="255" autocomplete="email" placeholder="user@example.com" pattern="[^\s@]+@[^\s@]+\.[^\s@]+" @input="emailTouched = true" /><span v-if="emailTouched && !isEmailValid" class="field-hint field-hint--error">Пожалуйста, введите корректный email (например, name@mail.com)</span></label>
         <label v-if="!firstRun" class="field-label">Часовой пояс<select v-model="form.timezone" required><option v-for="timezone in timezoneOptions" :key="timezone" :value="timezone">{{ timezone }}</option></select></label>
-        <div class="modal-actions"><button v-if="!firstRun" class="button button--quiet" type="button" @click="emit('switch-account')">Сменить аккаунт/Email</button><button v-if="!firstRun" class="button button--quiet" type="button" @click="close">Отмена</button><button class="button button--primary" type="submit" :disabled="isSaving">{{ isSaving ? 'Сохранение...' : 'Сохранить' }}</button></div>
+        <div class="modal-actions"><button v-if="!firstRun" class="button button--quiet" type="button" @click="emit('switch-account')">Сменить аккаунт/Email</button><button v-if="!firstRun" class="button button--quiet" type="button" @click="close">Отмена</button><button class="button button--primary" type="submit" :disabled="isSaving || !isEmailValid">{{ isSaving ? 'Сохранение...' : firstRun ? 'Войти' : 'Сохранить' }}</button></div>
       </form>
     </section>
   </div>
