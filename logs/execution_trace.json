@@ -39,7 +39,14 @@
       "status": "success",
       "timestamp": "2026-09-14T00:00:00Z",
       "summary": "Refined the trash UI, added a custom ConfirmModal, and implemented note restoration and permanent deletion."
+    },
+    {
+      "step": 7,
+      "action": "tag_color_customization_and_deletion",
+      "status": "success",
+      "timestamp": "2026-09-15T10:00:00Z",
+      "summary": "Added tag color customization, displayed the first tag color in FullCalendar events, and added confirmed tag deletion from the sidebar with note unlinking."
     }
   ],
-  "session_report": "Refined the trash UI with deleted-note cards, added a styled ConfirmModal, implemented restoration via POST /api/notes/{id}/restore, and implemented permanent deletion via DELETE /api/notes/{id}/permanent."
+  "session_report": "Added tag color customization, FullCalendar tag color display, and confirmed sidebar tag deletion with note unlinking."
 }
