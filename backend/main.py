@@ -102,15 +102,18 @@ def expand_note_occurrences(
     current = note.target_datetime
     repeat_until = note.repeat_until
     occurrences: list[dict[str, Any]] = []
+    occurrence_index = 0
     while current <= repeat_until:
         after_start = target_from is None or current >= target_from
         before_end = target_to is None or current <= target_to
         if after_start and before_end:
             occurrence = note_payload(note)
+            occurrence["id"] = -(note.id * 1_000_000 + occurrence_index + 1)
             occurrence["target_datetime"] = current.isoformat()
             occurrence["series_id"] = note.id
             occurrences.append(occurrence)
         current = next_occurrence(current, note.repeat)
+        occurrence_index += 1
     return occurrences
 
 

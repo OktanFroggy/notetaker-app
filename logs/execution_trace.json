@@ -44,6 +44,13 @@
       "summary": "Fixed NoteUpdate recurrence fields and expanded daily, weekly, and monthly notes for calendar queries."
     },
     {
+      "step": 13,
+      "action": "interactive_calendar_views_and_drag_drop",
+      "status": "success",
+      "timestamp": "2026-09-16T09:40:00Z",
+      "summary": "Added month, week, and day calendar views with editable drag-and-drop note rescheduling."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",
