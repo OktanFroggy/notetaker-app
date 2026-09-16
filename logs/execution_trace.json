@@ -51,6 +51,13 @@
       "summary": "Added month, week, and day calendar views with editable drag-and-drop note rescheduling."
     },
     {
+      "step": 14,
+      "action": "email_notifications_and_reminder_scheduler",
+      "status": "success",
+      "timestamp": "2026-09-16T10:00:00Z",
+      "summary": "Added an email emulator and a 30-second background scheduler that sends due reminders once."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",

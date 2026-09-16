@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine, get_db
+from email_emulator import send_email_notification
 import models
 from schemas import (
     NoteCreate,
@@ -135,15 +136,51 @@ async def cleanup_loop() -> None:
         await asyncio.sleep(24 * 60 * 60)
 
 
+def process_due_reminders() -> int:
+    now = datetime.now(timezone.utc)
+    sent_count = 0
+    with SessionLocal() as db:
+        reminders = list(
+            db.scalars(
+                select(models.Reminder)
+                .join(models.Reminder.note)
+                .where(
+                    models.Reminder.is_sent.is_(False),
+                    models.Reminder.remind_at <= now,
+                    models.Note.is_active.is_(True),
+                    models.Note.deleted_at.is_(None),
+                )
+            ).all()
+        )
+        for reminder in reminders:
+            send_email_notification(
+                reminder.note.user_email,
+                reminder.note.title,
+                reminder.remind_at,
+            )
+            reminder.is_sent = True
+            db.commit()
+            sent_count += 1
+    return sent_count
+
+
+async def reminder_scheduler_loop() -> None:
+    while True:
+        process_due_reminders()
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_default_user_settings()
     cleanup_task = asyncio.create_task(cleanup_loop())
+    reminder_task = asyncio.create_task(reminder_scheduler_loop())
     try:
         yield
     finally:
         cleanup_task.cancel()
-        await asyncio.gather(cleanup_task, return_exceptions=True)
+        reminder_task.cancel()
+        await asyncio.gather(cleanup_task, reminder_task, return_exceptions=True)
 
 
 app = FastAPI(title="Notetaker API", lifespan=lifespan)
