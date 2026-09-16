@@ -410,7 +410,7 @@ def list_notes(
     search: str | None = Query(default=None, max_length=255),
     target_from: datetime | None = Query(default=None),
     target_to: datetime | None = Query(default=None),
-    sort_by: str = Query(default="updated_at_desc", pattern=r"^(event_date_asc|event_date_desc|updated_at_desc)$"),
+    sort_by: str = Query(default="updated_at_desc", pattern=r"^(event_date_asc|event_date_desc|updated_at_desc|updated_at_asc)$"),
     expand_recurrences: bool = Query(default=False),
     current_email: str = Depends(get_current_email),
     db: Session = Depends(get_db),

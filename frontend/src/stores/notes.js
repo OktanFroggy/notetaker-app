@@ -43,7 +43,9 @@ export const useNotesStore = defineStore('notes', () => {
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const query = new URLSearchParams({ email: connectedEmail })
-    socket = new WebSocket(`${protocol}//${window.location.host}/ws?${query}`)
+    const backendPort = window.location.port === '5173' ? '8000' : window.location.port
+    const backendHost = backendPort ? `${window.location.hostname}:${backendPort}` : window.location.hostname
+    socket = new WebSocket(`${protocol}//${backendHost}/ws?${query}`)
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(data)
       if (message.event === 'note_created' || message.event === 'note_updated') {

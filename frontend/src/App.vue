@@ -228,8 +228,8 @@ onUnmounted(() => {
         <div class="list-filters">
           <label class="field-label">С даты<input v-model="notesStore.listTargetFrom" type="date" /></label>
           <label class="field-label">По дату<input v-model="notesStore.listTargetTo" type="date" /></label>
-          <label class="field-label">Статус<select v-model="notesStore.listStatus"><option value="all">Все</option><option value="active">Активные</option><option value="inactive">Деактивированные</option></select></label>
-          <label class="field-label">Сортировка<select v-model="notesStore.listSortBy"><option value="event_date_asc">Дата заметки: сначала ранние</option><option value="event_date_desc">Дата заметки: сначала поздние</option><option value="updated_at_desc">Дата изменения: новые</option></select></label>
+          <label class="field-label">Статус<select v-model="notesStore.listStatus"><option value="all">Все</option><option value="active">Активные</option><option value="inactive">Завершенные</option></select></label>
+          <label class="field-label">Сортировка<select v-model="notesStore.listSortBy"><option value="event_date_asc">Дата заметки: сначала ранние</option><option value="event_date_desc">Дата заметки: сначала поздние</option><option value="updated_at_desc">Дата изменения: новые</option><option value="updated_at_asc">Дата изменения: старые</option></select></label>
         </div>
         <fieldset class="tag-picker list-tag-picker"><legend>Теги</legend><label v-for="tag in tagsStore.tags" :key="tag.id" class="tag-check"><input v-model="notesStore.listTagIds" :value="tag.id" type="checkbox" />{{ tag.name }}</label><span v-if="!tagsStore.tags.length" class="muted">Теги пока не созданы</span></fieldset>
         <div v-if="!notesStore.notes.length && !notesStore.isLoading" class="notes-empty">Заметки не найдены</div>

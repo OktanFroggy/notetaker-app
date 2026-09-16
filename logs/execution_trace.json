@@ -130,7 +130,81 @@
       "status": "success",
       "timestamp": "2026-09-15T10:00:00Z",
       "summary": "Added email format validation, normalization, placeholder, disabled invalid submit states, and a clear validation message."
+    },
+    {
+      "step": 20,
+      "action": "automated_browser_end_to_end_test",
+      "status": "partial",
+      "timestamp": "2026-09-16T14:35:57+03:00",
+      "environment": {
+        "frontend": "http://127.0.0.1:5173",
+        "backend": "http://127.0.0.1:8000",
+        "database": "PostgreSQL on localhost:5432",
+        "tool": "Playwright via VS Code browser automation"
+      },
+      "passed": [
+        "Calendar month, week and day views switched successfully.",
+        "Calendar navigation moved from September 2026 to October 2026 and back to September 2026 with Today.",
+        "Clicking a calendar grid cell opened the create modal with a prefilled date and time.",
+        "Calendar drag-and-drop moved a note from September 16 to September 17 and persisted the change.",
+        "List date range filtering returned only notes in the selected interval.",
+        "List status filtering returned active and deactivated notes correctly.",
+        "List sorting by event date ascending and descending changed result order.",
+        "Multiple tag filters could be selected and the list updated.",
+        "Upcoming view rendered Today, This week and Past groups.",
+        "Completed view displayed a completed note and Reactivate returned it to active notes.",
+        "Trash restore returned a deleted note; permanent delete removed a note and left the trash empty.",
+        "Create modal rejected an empty required title.",
+        "Repeat selector accepted daily repetition and an end date.",
+        "All three reminder intervals and a tag could be selected and saved.",
+        "Recurring daily note expanded into three calendar occurrences.",
+        "Timezone change from Asia/Almaty to Europe/Moscow changed displayed time from 09:30 to 07:30 without changing the stored event instant.",
+        "Email account switching to a new email isolated the account data; the original email was restored after the test.",
+        "Temporary E2E notes were permanently removed after the run."
+      ],
+      "deviations": [
+        {
+          "area": "Realtime synchronization",
+          "status": "failed",
+          "observation": "The browser repeatedly reported WebSocket handshake 404 for ws://127.0.0.1:5173/ws?email=...; two-client live synchronization could not be verified.",
+          "impact": "Edits made in a second open tab may not appear without reload while this proxy/runtime issue persists."
+        },
+        {
+          "area": "List status wording",
+          "status": "note",
+          "observation": "The UI labels the inactive status as 'Деактивированные', while the requested scenario names the option 'Завершенные'.",
+          "impact": "Behavior is available, but the visible label differs from the test wording."
+        },
+        {
+          "area": "List sorting",
+          "status": "note",
+          "observation": "The UI exposes 'Дата изменения: новые' but no separate 'Дата изменения: старые' option; old/new behavior was therefore not fully testable."
+        }
+      ],
+      "summary": "Browser E2E coverage passed for the available calendar, list, navigation, modal, recurrence, trash and profile workflows. Overall result is partial because WebSocket realtime synchronization failed with HTTP 404 and the UI lacks the requested old-modification-date sort option."
+    },
+    {
+      "step": 21,
+      "action": "e2e_deviation_fixes_and_retest",
+      "status": "success",
+      "timestamp": "2026-09-16T14:43:47+03:00",
+      "changes": [
+        "Frontend WebSocket client now connects directly to ws://127.0.0.1:8000/ws during local Vite development instead of relying on the failing Vite websocket proxy path.",
+        "Added the websockets runtime dependency required by Uvicorn to accept websocket connections.",
+        "Renamed the inactive status option to 'Завершенные'.",
+        "Added 'Дата изменения: старые' and backend sort_by=updated_at_asc support."
+      ],
+      "verification": [
+        "Direct browser WebSocket handshake to ws://127.0.0.1:8000/ws succeeded.",
+        "A note_created event was received in a second browser page after creating the note in the first page.",
+        "The list selector displayed 'Завершенные' and both modification-date sort options.",
+        "GET /api/notes?sort_by=updated_at_asc returned HTTP 200.",
+        "Frontend production build succeeded.",
+        "Backend Python compilation succeeded.",
+        "Temporary realtime test data was removed."
+      ],
+      "summary": "All previously reported deviations were fixed and retested successfully."
     }
   ],
-  "session_report": "Added email format validation and standardization across login, profile settings, and the API."
+  "session_report": "Completed and retested the Playwright browser E2E suite on 2026-09-16. Realtime synchronization, status wording, and old modification-date sorting are now fixed."
 }
