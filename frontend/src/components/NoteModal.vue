@@ -1,5 +1,7 @@
 <script setup>
 import { reactive, watch } from 'vue'
+import { useUserSettingsStore } from '../stores/userSettings'
+import { dateTimeLocalToIso, toDateTimeLocal } from '../utils/dates'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -7,6 +9,7 @@ const props = defineProps({
   tags: { type: Array, default: () => [] },
   conflict: { type: Boolean, default: false },
 })
+const userSettingsStore = useUserSettingsStore()
 const emit = defineEmits(['update:modelValue', 'save', 'delete', 'toggle-status', 'reload-current'])
 const reminderOptions = [
   { offset: 10, label: 'За 10 минут' },
@@ -15,25 +18,25 @@ const reminderOptions = [
 ]
 const form = reactive({ title: '', text: '', target_datetime: '', repeat: 'none', repeat_until: '', tag_ids: [], reminderOffsets: [] })
 
-watch(() => props.note, (note) => {
+watch(() => [props.note, userSettingsStore.timezone], ([note]) => {
   form.title = note?.title || ''
   form.text = note?.text || ''
-  form.target_datetime = note?.target_datetime ? note.target_datetime.slice(0, 16) : ''
+  form.target_datetime = note?.target_datetime ? toDateTimeLocal(note.target_datetime, userSettingsStore.timezone) : ''
   form.repeat = note?.repeat || 'none'
-  form.repeat_until = note?.repeat_until ? note.repeat_until.slice(0, 16) : ''
+  form.repeat_until = note?.repeat_until ? toDateTimeLocal(note.repeat_until, userSettingsStore.timezone) : ''
   form.tag_ids = note?.tags?.map((tag) => tag.id) || []
   form.reminderOffsets = note?.reminders?.map((reminder) => reminder.offset_minutes) || []
 }, { immediate: true })
 
 function close() { emit('update:modelValue', false) }
 function submit() {
-  const targetDatetime = form.target_datetime ? new Date(form.target_datetime) : null
+  const targetDatetime = form.target_datetime ? dateTimeLocalToIso(form.target_datetime, userSettingsStore.timezone) : null
   const reminders = targetDatetime ? form.reminderOffsets.map((offset) => ({
     offset_minutes: offset,
-    remind_at: new Date(targetDatetime.getTime() - offset * 60 * 1000).toISOString(),
+    remind_at: new Date(new Date(targetDatetime).getTime() - offset * 60 * 1000).toISOString(),
     is_sent: false,
   })) : []
-  emit('save', { title: form.title.trim(), text: form.text.trim(), target_datetime: targetDatetime?.toISOString() || null, repeat: form.repeat, repeat_until: form.repeat !== 'none' && form.repeat_until ? new Date(form.repeat_until).toISOString() : null, is_active: props.note?.is_active ?? true, tag_ids: form.tag_ids, reminders })
+  emit('save', { title: form.title.trim(), text: form.text.trim(), target_datetime: targetDatetime, repeat: form.repeat, repeat_until: form.repeat !== 'none' && form.repeat_until ? dateTimeLocalToIso(form.repeat_until, userSettingsStore.timezone) : null, is_active: props.note?.is_active ?? true, tag_ids: form.tag_ids, reminders })
 }
 </script>
 

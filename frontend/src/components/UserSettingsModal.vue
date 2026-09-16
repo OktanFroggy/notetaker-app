@@ -78,7 +78,7 @@ async function submit() {
       method: 'PUT',
       body: JSON.stringify({ email: form.email.trim(), timezone: form.timezone }),
     })
-    emit('saved', settings.email)
+    emit('saved', settings)
     close()
   } catch (requestError) {
     error.value = requestError.message

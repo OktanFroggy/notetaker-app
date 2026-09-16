@@ -79,6 +79,13 @@
       "summary": "Added persistent occurrence exceptions, single-occurrence edit/delete handling, and per-occurrence reminder deliveries."
     },
     {
+      "step": 18,
+      "action": "user_timezone_aware_date_display",
+      "status": "success",
+      "timestamp": "2026-09-16T10:55:00Z",
+      "summary": "Added a reactive user settings timezone store and applied timezone-aware formatting to calendar, cards, reminders, and note forms without changing UTC reminder times."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",

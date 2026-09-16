@@ -1,10 +1,13 @@
 <script setup>
+import { useUserSettingsStore } from '../stores/userSettings'
+import { formatUserDate } from '../utils/dates'
 defineProps({
   modelValue: { type: Boolean, default: false },
   reminder: { type: Object, default: null },
 })
 
 const emit = defineEmits(['close'])
+const userSettingsStore = useUserSettingsStore()
 
 function close() { emit('close') }
 </script>
@@ -18,7 +21,7 @@ function close() { emit('close') }
       <h3>{{ reminder.note.title }}</h3>
       <p class="reminder-modal__text">{{ reminder.note.content || reminder.note.text || 'Без описания' }}</p>
       <time class="reminder-modal__time" :datetime="reminder.note.event_date || reminder.note.target_datetime">
-        {{ new Date(reminder.note.event_date || reminder.note.target_datetime).toLocaleString('ru-RU') }}
+        {{ formatUserDate(reminder.note.event_date || reminder.note.target_datetime, userSettingsStore.timezone) }}
       </time>
       <div class="reminder-modal__actions">
         <button class="button button--primary" type="button" @click="close">Понятно</button>

@@ -8,10 +8,13 @@ import ReminderModal from './components/ReminderModal.vue'
 import UserSettingsModal from './components/UserSettingsModal.vue'
 import { resolveMasterNoteId, useNotesStore } from './stores/notes'
 import { useTagsStore } from './stores/tags'
+import { useUserSettingsStore } from './stores/userSettings'
 import { api, clearStoredEmail, getStoredEmail, setStoredEmail } from './stores/api'
+import { dateKeyInTimeZone, formatUserDate } from './utils/dates'
 
 const notesStore = useNotesStore()
 const tagsStore = useTagsStore()
+const userSettingsStore = useUserSettingsStore()
 const isModalOpen = ref(false)
 const editingNote = ref(null)
 const toast = ref('')
@@ -40,13 +43,14 @@ const noteEvents = computed(() => notesStore.filteredNotes.map((note) => {
 }))
 const upcomingGroups = computed(() => {
   const now = new Date()
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const endToday = new Date(startToday); endToday.setDate(endToday.getDate() + 1)
-  const startWeek = new Date(startToday); startWeek.setDate(startWeek.getDate() - (startWeek.getDay() || 7) + 1)
-  const endWeek = new Date(startWeek); endWeek.setDate(endWeek.getDate() + 7)
+  const todayKey = dateKeyInTimeZone(now, userSettingsStore.timezone)
+  const startToday = new Date(`${todayKey}T00:00:00Z`)
+  const endToday = new Date(startToday); endToday.setUTCDate(endToday.getUTCDate() + 1)
+  const startWeek = new Date(startToday); startWeek.setUTCDate(startWeek.getUTCDate() - (startWeek.getUTCDay() || 7) + 1)
+  const endWeek = new Date(startWeek); endWeek.setUTCDate(endWeek.getUTCDate() + 7)
   const groups = { today: [], week: [], overdue: [] }
   notesStore.filteredNotes.filter((note) => note.is_active && note.target_datetime).forEach((note) => {
-    const date = new Date(note.target_datetime)
+    const date = new Date(`${dateKeyInTimeZone(note.target_datetime, userSettingsStore.timezone)}T00:00:00Z`)
     if (date < startToday) groups.overdue.push(note)
     else if (date < endToday) groups.today.push(note)
     else if (date < endWeek) groups.week.push(note)
@@ -148,9 +152,15 @@ async function addTag(payload) { try { await tagsStore.createTag(payload) } catc
 async function updateTag(payload) { try { await tagsStore.updateTag(payload.id, { name: payload.name, color: payload.color }) } catch (error) { toast.value = error.message } }
 async function loadAccountData() {
   notesStore.connectRealtime(userEmail.value)
-  await Promise.all([notesStore.loadNotes(), tagsStore.loadTags()])
+  await Promise.all([userSettingsStore.load(), notesStore.loadNotes(), tagsStore.loadTags()])
 }
-function settingsSaved(email) { setStoredEmail(email); userEmail.value = email; isSettingsOpen.value = false; toast.value = 'Настройки сохранены' }
+function settingsSaved(settings) {
+  setStoredEmail(settings.email)
+  userEmail.value = settings.email
+  userSettingsStore.setSettings(settings)
+  isSettingsOpen.value = false
+  toast.value = 'Настройки сохранены'
+}
 function switchAccount() { notesStore.disconnectRealtime(); clearStoredEmail(); userEmail.value = ''; isSettingsOpen.value = true; notesStore.notes = []; tagsStore.tags = [] }
 function requestDeleteTag(tag) {
   confirmAction.value = {
@@ -196,8 +206,8 @@ onUnmounted(() => {
       <section class="calendar-toolbar"><div class="calendar-summary"><span class="summary-dot"></span>{{ activeNotes }} активных заметок</div></section>
       <div v-if="notesStore.error" class="error-banner">{{ notesStore.error }} <button type="button" @click="notesStore.loadNotes">Повторить</button></div>
       <section v-if="notesStore.activeTab === 'calendar'" class="calendar-wrap" :class="{ 'calendar-wrap--loading': notesStore.isLoading }"><CalendarView :events="noteEvents" @date-click="openCreate($event.dateStr)" @event-click="openEdit($event.note)" @event-drop="moveNote" /></section>
-      <section v-else-if="notesStore.activeTab === 'upcoming'" class="notes-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-for="group in [{ title: 'Сегодня', notes: upcomingGroups.today }, { title: 'На этой неделе', notes: upcomingGroups.week }, { title: 'Прошедшие', notes: upcomingGroups.overdue }]" :key="group.title" class="notes-group"><h2>{{ group.title }}</h2><div v-if="!group.notes.length" class="notes-empty">Нет заметок</div><div v-else class="trash-grid"><article v-for="note in group.notes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime">{{ new Date(note.target_datetime).toLocaleString('ru-RU') }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Завершить</button></div></article></div></div></section>
-      <section v-else-if="notesStore.activeTab === 'completed'" class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-if="!notesStore.filteredNotes.length && !notesStore.isLoading" class="trash-empty">Выполненных заметок нет</div><div v-else class="trash-grid"><article v-for="note in notesStore.filteredNotes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime || note.updated_at">{{ new Date(note.target_datetime || note.updated_at).toLocaleString('ru-RU') }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Вернуть в активные</button></div></article></div></section>
+      <section v-else-if="notesStore.activeTab === 'upcoming'" class="notes-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-for="group in [{ title: 'Сегодня', notes: upcomingGroups.today }, { title: 'На этой неделе', notes: upcomingGroups.week }, { title: 'Прошедшие', notes: upcomingGroups.overdue }]" :key="group.title" class="notes-group"><h2>{{ group.title }}</h2><div v-if="!group.notes.length" class="notes-empty">Нет заметок</div><div v-else class="trash-grid"><article v-for="note in group.notes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime">{{ formatUserDate(note.target_datetime, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Завершить</button></div></article></div></div></section>
+      <section v-else-if="notesStore.activeTab === 'completed'" class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-if="!notesStore.filteredNotes.length && !notesStore.isLoading" class="trash-empty">Выполненных заметок нет</div><div v-else class="trash-grid"><article v-for="note in notesStore.filteredNotes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime || note.updated_at">{{ formatUserDate(note.target_datetime || note.updated_at, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Вернуть в активные</button></div></article></div></section>
       <section v-else class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }">
         <div v-if="!notesStore.filteredNotes.length && !notesStore.isLoading" class="trash-empty">Корзина пуста</div>
         <div v-else class="trash-grid">
@@ -206,7 +216,7 @@ onUnmounted(() => {
               <h2>{{ note.title }}</h2>
               <p>{{ note.text || 'Без текста' }}</p>
               <div v-if="note.tags?.length" class="note-tags" style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px;" aria-label="Теги заметки"><span v-for="tag in note.tags" :key="tag.id" class="note-tag" :style="{ color: tag.color || '#3B82F6', border: `1px solid ${tag.color || '#3B82F6'}`, borderRadius: '999px', padding: '3px 8px', backgroundColor: `${tag.color || '#3B82F6'}18`, fontSize: '10px', fontWeight: '700' }">{{ tag.name }}</span></div>
-              <time :datetime="note.target_datetime || note.deleted_at || note.updated_at">{{ new Date(note.target_datetime || note.deleted_at || note.updated_at).toLocaleString('ru-RU') }}</time>
+              <time :datetime="note.target_datetime || note.deleted_at || note.updated_at">{{ formatUserDate(note.target_datetime || note.deleted_at || note.updated_at, userSettingsStore.timezone) }}</time>
             </div>
             <div class="trash-card__actions">
               <button class="button button--quiet" type="button" @click="restoreNote(note)">Восстановить</button>
