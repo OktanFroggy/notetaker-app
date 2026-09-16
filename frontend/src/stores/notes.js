@@ -9,9 +9,10 @@ export const useNotesStore = defineStore('notes', () => {
   const selectedTagId = ref(null)
   const activeTab = ref('calendar')
   const searchQuery = ref('')
-  const realtimeEnabled = false
+  const realtimeEnabled = true
   let socket = null
   let reconnectTimer = null
+  let connectedEmail = ''
 
   function upsertNote(note) {
     const index = notes.value.findIndex((item) => item.id === note.id)
@@ -20,16 +21,46 @@ export const useNotesStore = defineStore('notes', () => {
   }
 
   function connectWebSocket() {
-    if (!realtimeEnabled || typeof window === 'undefined' || typeof window.WebSocket !== 'function') return
+    if (!realtimeEnabled || !connectedEmail || typeof window === 'undefined' || typeof window.WebSocket !== 'function') return
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    socket = new WebSocket(`${protocol}//${window.location.host}/ws`)
+    const query = new URLSearchParams({ email: connectedEmail })
+    socket = new WebSocket(`${protocol}//${window.location.host}/ws?${query}`)
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(data)
-      if (message.event === 'note_created' || message.event === 'note_updated') upsertNote(message.note)
-      if (message.event === 'note_deleted') notes.value = notes.value.filter((note) => note.id !== (message.note?.id || message.note_id))
+      if (message.event === 'note_created' || message.event === 'note_updated') {
+        void loadNotes({ tab: activeTab.value })
+      }
+      if (message.event === 'note_deleted') {
+        const deletedId = message.note?.id || message.note_id
+        notes.value = notes.value.filter((note) => note.id !== deletedId && note.series_id !== deletedId)
+      }
     }
     socket.onclose = () => {
-      reconnectTimer = window.setTimeout(connectWebSocket, 3000)
+      socket = null
+      if (realtimeEnabled && connectedEmail) reconnectTimer = window.setTimeout(connectWebSocket, 3000)
+    }
+  }
+
+  function connectRealtime(email) {
+    if (!realtimeEnabled || !email) return
+    window.clearTimeout(reconnectTimer)
+    if (socket) {
+      socket.onclose = null
+      socket.close()
+      socket = null
+    }
+    connectedEmail = email
+    connectWebSocket()
+  }
+
+  function disconnectRealtime() {
+    connectedEmail = ''
+    window.clearTimeout(reconnectTimer)
+    if (socket) {
+      socket.onclose = null
+      socket.close()
+      socket = null
     }
   }
 
@@ -93,12 +124,11 @@ export const useNotesStore = defineStore('notes', () => {
     notes.value = notes.value.filter((note) => note.id !== id)
   }
 
-  if (realtimeEnabled) connectWebSocket()
-
   const isTrashView = computed(() => activeTab.value === 'trash')
 
   return {
     notes, filteredNotes, isLoading, error, selectedTagId, activeTab, isTrashView, searchQuery,
     loadNotes, loadTrash, createNote, updateNote, deleteNote, restoreNote, permanentlyDeleteNote,
+    connectRealtime, disconnectRealtime,
   }
 })

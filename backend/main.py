@@ -43,20 +43,23 @@ def ensure_default_user_settings() -> None:
 
 class ConnectionManager:
     def __init__(self) -> None:
-        self.active_connections: list[WebSocket] = []
+        self.active_connections: dict[WebSocket, str] = {}
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, email: str) -> None:
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections[websocket] = email
 
     def disconnect(self, websocket: WebSocket) -> None:
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        self.active_connections.pop(websocket, None)
 
-    async def broadcast(self, event: str, payload: dict[str, Any]) -> None:
+    async def broadcast(
+        self, event: str, payload: dict[str, Any], target_email: str | None = None
+    ) -> None:
         message = {"event": event, **payload}
         disconnected = []
-        for websocket in self.active_connections:
+        for websocket, email in self.active_connections.items():
+            if target_email is not None and email != target_email:
+                continue
             try:
                 await websocket.send_json(message)
             except Exception:
@@ -269,7 +272,12 @@ def resolve_tags(tag_ids: list[int], current_email: str, db: Session) -> list[mo
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    await manager.connect(websocket)
+    try:
+        email = normalize_email(websocket.query_params.get("email", ""))
+    except ValueError:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    await manager.connect(websocket, email)
     try:
         while True:
             await websocket.receive_text()
@@ -337,7 +345,7 @@ async def create_note(
     db.add(note)
     db.commit()
     db.refresh(note)
-    await manager.broadcast("note_created", {"note": note_payload(note)})
+    await manager.broadcast("note_created", {"note": note_payload(note)}, current_email)
     return note
 
 
@@ -371,7 +379,7 @@ async def update_note(
     note.version += 1
     db.commit()
     db.refresh(note)
-    await manager.broadcast("note_updated", {"note": note_payload(note)})
+    await manager.broadcast("note_updated", {"note": note_payload(note)}, current_email)
     return note
 
 
@@ -385,7 +393,7 @@ async def delete_note(
     note.version += 1
     db.commit()
     db.refresh(note)
-    await manager.broadcast("note_deleted", {"note": note_payload(note)})
+    await manager.broadcast("note_deleted", {"note": note_payload(note)}, current_email)
     return note
 
 
@@ -399,7 +407,7 @@ async def restore_note(
     note.version += 1
     db.commit()
     db.refresh(note)
-    await manager.broadcast("note_updated", {"note": note_payload(note)})
+    await manager.broadcast("note_updated", {"note": note_payload(note)}, current_email)
     return note
 
 
@@ -410,7 +418,7 @@ async def permanently_delete_note(
     note = get_note_or_404(note_id, current_email, db)
     db.delete(note)
     db.commit()
-    await manager.broadcast("note_deleted", {"note_id": note_id})
+    await manager.broadcast("note_deleted", {"note_id": note_id}, current_email)
 
 
 @app.get("/api/tags", response_model=list[TagResponse])

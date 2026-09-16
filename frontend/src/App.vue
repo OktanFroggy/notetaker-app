@@ -137,9 +137,12 @@ async function openUpcoming() { await notesStore.loadNotes({ tab: 'upcoming' }) 
 async function reloadConflict() { await notesStore.loadNotes(); editingNote.value = notesStore.notes.find((note) => note.id === editingNote.value?.id) || null; conflict.value = false }
 async function addTag(payload) { try { await tagsStore.createTag(payload) } catch (error) { toast.value = error.message } }
 async function updateTag(payload) { try { await tagsStore.updateTag(payload.id, { name: payload.name, color: payload.color }) } catch (error) { toast.value = error.message } }
-async function loadAccountData() { await Promise.all([notesStore.loadNotes(), tagsStore.loadTags()]) }
+async function loadAccountData() {
+  notesStore.connectRealtime(userEmail.value)
+  await Promise.all([notesStore.loadNotes(), tagsStore.loadTags()])
+}
 function settingsSaved(email) { setStoredEmail(email); userEmail.value = email; isSettingsOpen.value = false; toast.value = 'Настройки сохранены' }
-function switchAccount() { clearStoredEmail(); userEmail.value = ''; isSettingsOpen.value = true; notesStore.notes = []; tagsStore.tags = [] }
+function switchAccount() { notesStore.disconnectRealtime(); clearStoredEmail(); userEmail.value = ''; isSettingsOpen.value = true; notesStore.notes = []; tagsStore.tags = [] }
 function requestDeleteTag(tag) {
   confirmAction.value = {
     type: 'tag',

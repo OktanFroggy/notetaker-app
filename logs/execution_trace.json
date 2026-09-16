@@ -58,6 +58,13 @@
       "summary": "Added an email emulator and a 30-second background scheduler that sends due reminders once."
     },
     {
+      "step": 15,
+      "action": "live_websocket_note_synchronization",
+      "status": "success",
+      "timestamp": "2026-09-16T10:05:00Z",
+      "summary": "Enabled authenticated WebSocket connections and automatic note list refreshes for create, update, and delete events."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",
