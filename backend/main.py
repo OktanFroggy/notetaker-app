@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -68,6 +69,49 @@ manager = ConnectionManager()
 
 def note_payload(note: models.Note) -> dict[str, Any]:
     return NoteResponse.model_validate(note).model_dump(mode="json")
+
+
+def next_occurrence(value: datetime, repeat: str) -> datetime:
+    if repeat == "daily":
+        return value + timedelta(days=1)
+    if repeat == "weekly":
+        return value + timedelta(weeks=1)
+    if repeat == "monthly":
+        year = value.year + (value.month == 12)
+        month = 1 if value.month == 12 else value.month + 1
+        day = min(value.day, monthrange(year, month)[1])
+        return value.replace(year=year, month=month, day=day)
+    raise ValueError(f"Unsupported repeat interval: {repeat}")
+
+
+def expand_note_occurrences(
+    note: models.Note,
+    target_from: datetime | None = None,
+    target_to: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return calendar occurrences while keeping the stored note as the series master."""
+    if (
+        note.target_datetime is None
+        or note.repeat == "none"
+        or note.repeat_until is None
+    ):
+        occurrence = note_payload(note)
+        occurrence["series_id"] = None
+        return [occurrence]
+
+    current = note.target_datetime
+    repeat_until = note.repeat_until
+    occurrences: list[dict[str, Any]] = []
+    while current <= repeat_until:
+        after_start = target_from is None or current >= target_from
+        before_end = target_to is None or current <= target_to
+        if after_start and before_end:
+            occurrence = note_payload(note)
+            occurrence["target_datetime"] = current.isoformat()
+            occurrence["series_id"] = note.id
+            occurrences.append(occurrence)
+        current = next_occurrence(current, note.repeat)
+    return occurrences
 
 
 def purge_deleted_notes() -> list[int]:
@@ -199,9 +243,10 @@ def list_notes(
     is_active: bool | None = None,
     target_from: datetime | None = Query(default=None),
     target_to: datetime | None = Query(default=None),
+    expand_recurrences: bool = Query(default=False),
     current_email: str = Depends(get_current_email),
     db: Session = Depends(get_db),
-) -> list[models.Note]:
+) -> list[models.Note] | list[dict[str, Any]]:
     query = select(models.Note).where(
         models.Note.deleted_at.is_(None), models.Note.user_email == current_email
     )
@@ -209,11 +254,17 @@ def list_notes(
         query = query.join(models.Note.tags).where(models.Tag.id == tag_id)
     if is_active is not None:
         query = query.where(models.Note.is_active == is_active)
-    if target_from is not None:
+    if target_from is not None and not expand_recurrences:
         query = query.where(models.Note.target_datetime >= target_from)
-    if target_to is not None:
+    if target_to is not None and not expand_recurrences:
         query = query.where(models.Note.target_datetime <= target_to)
-    return list(db.scalars(query.order_by(models.Note.updated_at.desc())).unique().all())
+    notes = list(db.scalars(query.order_by(models.Note.updated_at.desc())).unique().all())
+    if not expand_recurrences:
+        return notes
+    expanded = []
+    for note in notes:
+        expanded.extend(expand_note_occurrences(note, target_from, target_to))
+    return expanded
 
 
 @app.get("/api/notes/trash", response_model=list[NoteResponse])
@@ -260,9 +311,16 @@ async def update_note(
     note = get_note_or_404(note_id, current_email, db)
     if note.version != note_data.version:
         raise HTTPException(status_code=409, detail="Note version conflict")
-    updates = note_data.model_dump(exclude_unset=True, exclude={"version", "tag_ids", "reminders"})
+    updates = note_data.model_dump(
+        exclude_unset=True,
+        exclude={"version", "tag_ids", "reminders", "repeat", "repeat_until"},
+    )
     for field, value in updates.items():
         setattr(note, field, value)
+    if "repeat" in note_data.model_fields_set:
+        note.repeat = note_data.repeat if note_data.repeat is not None else "none"
+    if "repeat_until" in note_data.model_fields_set:
+        note.repeat_until = note_data.repeat_until
     if note_data.tag_ids is not None:
         note.tags = resolve_tags(note_data.tag_ids, current_email, db)
     if note_data.reminders is not None:

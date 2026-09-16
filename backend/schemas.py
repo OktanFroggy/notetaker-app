@@ -88,6 +88,8 @@ class NoteUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     text: str | None = None
     target_datetime: datetime | None = None
+    repeat: str | None = Field(default=None, pattern=r"^(none|daily|weekly|monthly)$")
+    repeat_until: datetime | None = None
     is_active: bool | None = None
     tag_ids: list[int] | None = None
     reminders: list[ReminderCreate] | None = None
@@ -102,3 +104,4 @@ class NoteResponse(NoteBase):
     updated_at: datetime
     tags: list[TagResponse] = Field(default_factory=list)
     reminders: list[ReminderResponse] = Field(default_factory=list)
+    series_id: int | None = None

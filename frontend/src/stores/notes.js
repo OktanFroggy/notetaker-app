@@ -52,6 +52,7 @@ export const useNotesStore = defineStore('notes', () => {
       const params = new URLSearchParams()
       if (selectedTagId.value) params.set('tag_id', selectedTagId.value)
       params.set('is_active', tab === 'completed' ? 'false' : 'true')
+      if (tab === 'calendar') params.set('expand_recurrences', 'true')
       notes.value = await api(`/api/notes?${params}`)
     } catch (requestError) {
       error.value = requestError.message

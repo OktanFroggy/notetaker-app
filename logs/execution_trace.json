@@ -37,6 +37,13 @@
       "summary": "Added recurring note settings with selectable frequency and repeat end date."
     },
     {
+      "step": 12,
+      "action": "backend_recurring_notes_expansion",
+      "status": "success",
+      "timestamp": "2026-09-16T09:30:00Z",
+      "summary": "Fixed NoteUpdate recurrence fields and expanded daily, weekly, and monthly notes for calendar queries."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",
