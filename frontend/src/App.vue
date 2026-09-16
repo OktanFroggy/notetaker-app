@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import CalendarView from './components/CalendarView.vue'
+import NotesList from './components/NotesList.vue'
 import NoteModal from './components/NoteModal.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import ReminderModal from './components/ReminderModal.vue'
@@ -145,6 +146,8 @@ async function restoreNote(note) {
 }
 async function openTrash() { await notesStore.loadTrash() }
 async function openCalendar() { await notesStore.loadNotes({ tab: 'calendar' }) }
+async function openList() { await notesStore.loadList() }
+async function applyListFilters(filters) { await notesStore.loadList(filters) }
 async function openCompleted() { await notesStore.loadNotes({ tab: 'completed' }) }
 async function openUpcoming() { await notesStore.loadNotes({ tab: 'upcoming' }) }
 async function reloadConflict() { await notesStore.loadNotes(); editingNote.value = notesStore.notes.find((note) => note.id === editingNote.value?.id) || null; conflict.value = false }
@@ -200,12 +203,13 @@ onUnmounted(() => {
 
 <template>
   <div v-if="!isFirstRun" class="app-shell">
-    <Sidebar :tags="tagsStore.tags" :selected-tag-id="notesStore.selectedTagId" :active-tab="notesStore.activeTab" :is-trash-view="notesStore.isTrashView" :note-count="notesStore.notes.length" @new-note="openCreate()" @open-trash="openTrash" @select-calendar="openCalendar" @select-completed="openCompleted" @select-upcoming="openUpcoming" @select-tag="notesStore.selectedTagId = $event" @add-tag="addTag" @update-tag="updateTag" @delete-tag="requestDeleteTag" />
+    <Sidebar :tags="tagsStore.tags" :selected-tag-id="notesStore.selectedTagId" :active-tab="notesStore.activeTab" :is-trash-view="notesStore.isTrashView" :note-count="notesStore.notes.length" @new-note="openCreate()" @open-trash="openTrash" @select-calendar="openCalendar" @select-list="openList" @select-completed="openCompleted" @select-upcoming="openUpcoming" @select-tag="notesStore.selectedTagId = $event" @add-tag="addTag" @update-tag="updateTag" @delete-tag="requestDeleteTag" />
     <main class="main-content">
       <header class="topbar"><div><p class="eyebrow">Рабочее пространство</p><h1>Мои заметки</h1></div><div class="topbar-actions"><label class="search"><span>⌕</span><input v-model="notesStore.searchQuery" placeholder="Поиск заметок" /></label><button class="settings-button" type="button" aria-label="Настройки" title="Настройки" @click="isSettingsOpen = true">⚙<span>Настройки</span></button><button class="avatar" type="button">Ф</button></div></header>
       <section class="calendar-toolbar"><div class="calendar-summary"><span class="summary-dot"></span>{{ activeNotes }} активных заметок</div></section>
       <div v-if="notesStore.error" class="error-banner">{{ notesStore.error }} <button type="button" @click="notesStore.loadNotes">Повторить</button></div>
       <section v-if="notesStore.activeTab === 'calendar'" class="calendar-wrap" :class="{ 'calendar-wrap--loading': notesStore.isLoading }"><CalendarView :events="noteEvents" @date-click="openCreate($event.dateStr)" @event-click="openEdit($event.note)" @event-drop="moveNote" /></section>
+      <NotesList v-else-if="notesStore.activeTab === 'list'" :tags="tagsStore.tags" :notes="notesStore.filteredNotes" :loading="notesStore.isLoading" :initial-search="notesStore.searchQuery" @apply="applyListFilters" @open="openEdit" />
       <section v-else-if="notesStore.activeTab === 'upcoming'" class="notes-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-for="group in [{ title: 'Сегодня', notes: upcomingGroups.today }, { title: 'На этой неделе', notes: upcomingGroups.week }, { title: 'Прошедшие', notes: upcomingGroups.overdue }]" :key="group.title" class="notes-group"><h2>{{ group.title }}</h2><div v-if="!group.notes.length" class="notes-empty">Нет заметок</div><div v-else class="trash-grid"><article v-for="note in group.notes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime">{{ formatUserDate(note.target_datetime, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Завершить</button></div></article></div></div></section>
       <section v-else-if="notesStore.activeTab === 'completed'" class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-if="!notesStore.filteredNotes.length && !notesStore.isLoading" class="trash-empty">Выполненных заметок нет</div><div v-else class="trash-grid"><article v-for="note in notesStore.filteredNotes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime || note.updated_at">{{ formatUserDate(note.target_datetime || note.updated_at, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Вернуть в активные</button></div></article></div></section>
       <section v-else class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }">

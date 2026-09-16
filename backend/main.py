@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Web
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import asc, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -405,9 +405,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 @app.get("/api/notes", response_model=list[NoteResponse])
 def list_notes(
     tag_id: int | None = None,
+    tag_ids: list[int] | None = Query(default=None),
     is_active: bool | None = None,
+    search: str | None = Query(default=None, max_length=255),
     target_from: datetime | None = Query(default=None),
     target_to: datetime | None = Query(default=None),
+    sort_by: str = Query(default="updated_at_desc", pattern=r"^(event_date_asc|event_date_desc|updated_at_desc)$"),
     expand_recurrences: bool = Query(default=False),
     current_email: str = Depends(get_current_email),
     db: Session = Depends(get_db),
@@ -415,15 +418,33 @@ def list_notes(
     query = select(models.Note).where(
         models.Note.deleted_at.is_(None), models.Note.user_email == current_email
     )
-    if tag_id is not None:
-        query = query.join(models.Note.tags).where(models.Tag.id == tag_id)
+    selected_tag_ids = tag_ids or ([] if tag_id is None else [tag_id])
+    if selected_tag_ids:
+        query = query.join(models.Note.tags).where(models.Tag.id.in_(selected_tag_ids))
     if is_active is not None:
         query = query.where(models.Note.is_active == is_active)
+    if search and search.strip():
+        search_pattern = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                models.Note.title.ilike(search_pattern),
+                models.Note.text.ilike(search_pattern),
+            )
+        )
     if target_from is not None and not expand_recurrences:
         query = query.where(models.Note.target_datetime >= target_from)
     if target_to is not None and not expand_recurrences:
         query = query.where(models.Note.target_datetime <= target_to)
-    notes = list(db.scalars(query.order_by(models.Note.updated_at.desc())).unique().all())
+    sort_column = models.Note.updated_at
+    sort_direction = desc
+    if sort_by == "event_date_asc":
+        sort_column = models.Note.target_datetime
+        sort_direction = asc
+    elif sort_by == "event_date_desc":
+        sort_column = models.Note.target_datetime
+    notes = list(
+        db.scalars(query.order_by(sort_direction(sort_column).nullslast(), models.Note.id)).unique().all()
+    )
     if not expand_recurrences:
         return notes
     expanded = []
