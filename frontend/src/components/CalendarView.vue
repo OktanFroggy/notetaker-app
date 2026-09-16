@@ -17,7 +17,7 @@ const emit = defineEmits(['date-click', 'event-click', 'event-drop'])
 
 function normalizeEventNote(info) {
   const note = info.event.extendedProps.note
-  return { ...note, id: resolveMasterNoteId(note) }
+  return { ...note, id: resolveMasterNoteId(note), occurrence_id: String(info.event.id) }
 }
 
 const calendarOptions = {

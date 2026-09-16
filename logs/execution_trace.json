@@ -72,6 +72,13 @@
       "summary": "Resolved virtual occurrence IDs to master notes and synchronized dismissed reminder modals across tabs."
     },
     {
+      "step": 17,
+      "action": "recurring_note_exceptions_and_occurrence_reminders",
+      "status": "success",
+      "timestamp": "2026-09-16T10:50:00Z",
+      "summary": "Added persistent occurrence exceptions, single-occurrence edit/delete handling, and per-occurrence reminder deliveries."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",

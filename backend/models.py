@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Table, Text, Column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Table, Text, Column, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -51,6 +51,9 @@ class Note(Base):
     )
     tags: Mapped[list[Tag]] = relationship(secondary=note_tags, back_populates="notes")
     reminders: Mapped[list["Reminder"]] = relationship(back_populates="note")
+    exceptions: Mapped[list["NoteException"]] = relationship(
+        back_populates="master_note", cascade="all, delete-orphan"
+    )
 
 
 class Reminder(Base):
@@ -62,3 +65,34 @@ class Reminder(Base):
     offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     note: Mapped[Note] = relationship(back_populates="reminders")
+
+
+class NoteException(Base):
+    __tablename__ = "note_exceptions"
+    __table_args__ = (UniqueConstraint("master_note_id", "original_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    master_note_id: Mapped[int] = mapped_column(
+        ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    original_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    new_title: Mapped[str | None] = mapped_column(String(255))
+    new_text: Mapped[str | None] = mapped_column(Text)
+    new_event_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    new_is_active: Mapped[bool | None] = mapped_column(Boolean)
+    master_note: Mapped[Note] = relationship(back_populates="exceptions")
+
+
+class ReminderDelivery(Base):
+    __tablename__ = "reminder_deliveries"
+    __table_args__ = (UniqueConstraint("reminder_id", "occurrence_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    reminder_id: Mapped[int] = mapped_column(
+        ForeignKey("reminders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    occurrence_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reminder: Mapped[Reminder] = relationship()

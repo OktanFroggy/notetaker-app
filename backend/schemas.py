@@ -98,7 +98,7 @@ class NoteUpdate(BaseModel):
 class NoteResponse(NoteBase):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: int | str
     deleted_at: datetime | None = None
     version: int
     updated_at: datetime

@@ -74,17 +74,17 @@ export const useNotesStore = defineStore('notes', () => {
       socket.close()
       socket = null
     }
+  }
 
-    function sendReminderDismissed(reminderKey) {
-      if (socket?.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ event: 'reminder_dismissed', reminder_key: reminderKey }))
-      }
+  function sendReminderDismissed(reminderKey) {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ event: 'reminder_dismissed', reminder_key: reminderKey }))
     }
+  }
 
-    function onReminderDismissed(listener) {
-      reminderDismissedListeners.add(listener)
-      return () => reminderDismissedListeners.delete(listener)
-    }
+  function onReminderDismissed(listener) {
+    reminderDismissedListeners.add(listener)
+    return () => reminderDismissedListeners.delete(listener)
   }
 
   const filteredNotes = computed(() => notes.value.filter((note) => {
@@ -123,7 +123,8 @@ export const useNotesStore = defineStore('notes', () => {
 
   async function updateNote(id, payload) {
     const masterId = resolveMasterNoteId(id)
-    const note = await api(`/api/notes/${masterId}`, { method: 'PUT', body: JSON.stringify(payload) })
+    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : masterId
+    const note = await api(`/api/notes/${endpointId}`, { method: 'PUT', body: JSON.stringify(payload) })
     const index = notes.value.findIndex((item) => item.id === id || item.id === masterId || item.series_id === masterId)
     if (index !== -1) notes.value[index] = note
     return note
@@ -131,7 +132,8 @@ export const useNotesStore = defineStore('notes', () => {
 
   async function deleteNote(id) {
     const masterId = resolveMasterNoteId(id)
-    await api(`/api/notes/${masterId}`, { method: 'DELETE' })
+    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : masterId
+    await api(`/api/notes/${endpointId}`, { method: 'DELETE' })
     notes.value = notes.value.filter((note) => note.id !== id && note.id !== masterId && note.series_id !== masterId)
   }
 
@@ -140,12 +142,14 @@ export const useNotesStore = defineStore('notes', () => {
   }
 
   async function restoreNote(id) {
-    await api(`/api/notes/${id}/restore`, { method: 'POST' })
+    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : resolveMasterNoteId(id)
+    await api(`/api/notes/${endpointId}/restore`, { method: 'POST' })
     notes.value = notes.value.filter((note) => note.id !== id)
   }
 
   async function permanentlyDeleteNote(id) {
-    await api(`/api/notes/${id}/permanent`, { method: 'DELETE' })
+    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : resolveMasterNoteId(id)
+    await api(`/api/notes/${endpointId}/permanent`, { method: 'DELETE' })
     notes.value = notes.value.filter((note) => note.id !== id)
   }
 

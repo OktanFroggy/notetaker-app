@@ -56,10 +56,11 @@ const upcomingGroups = computed(() => {
 watch(() => notesStore.selectedTagId, () => notesStore.loadNotes())
 function openCreate(date = '') { editingNote.value = date ? { target_datetime: `${date}T09:00:00` } : null; isModalOpen.value = true }
 function openEdit(note) { editingNote.value = note; isModalOpen.value = true }
-async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(resolveMasterNoteId(editingNote.value), { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
+function noteEndpointId(note) { return note?.occurrence_id || (typeof note?.id === 'string' && note.id.includes('_virtual_') ? note.id : resolveMasterNoteId(note)) }
+async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(noteEndpointId(editingNote.value), { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
 async function moveNote(eventInfo) {
   const { info, note } = eventInfo
-  const noteId = resolveMasterNoteId(note)
+  const noteId = note.occurrence_id || resolveMasterNoteId(note)
   try {
     await notesStore.updateNote(noteId, {
       target_datetime: info.event.start.toISOString(),
@@ -106,7 +107,7 @@ async function checkReminders() {
     // Reminder polling should not interrupt the main note workflow.
   }
 }
-async function toggleNoteStatus(note) { try { await notesStore.updateNote(note.id, { is_active: !note.is_active, version: note.version }); isModalOpen.value = false; toast.value = note.is_active ? 'Заметка завершена' : 'Заметка возвращена в активные'; await notesStore.loadNotes() } catch (error) { toast.value = error.message } }
+async function toggleNoteStatus(note) { try { await notesStore.updateNote(noteEndpointId(note), { is_active: !note.is_active, version: note.version }); isModalOpen.value = false; toast.value = note.is_active ? 'Заметка завершена' : 'Заметка возвращена в активные'; await notesStore.loadNotes() } catch (error) { toast.value = error.message } }
 function requestDelete(note) {
   confirmAction.value = { type: 'delete', note, title: 'Переместить заметку в корзину?', message: `Заметка «${note.title}» будет перемещена в корзину.`, confirmLabel: 'Удалить' }
 }
@@ -118,10 +119,10 @@ async function confirmRequestedAction() {
   if (!action) return
   try {
     if (action.type === 'permanent') {
-      await notesStore.permanentlyDeleteNote(action.note.id)
+      await notesStore.permanentlyDeleteNote(noteEndpointId(action.note))
       toast.value = 'Заметка удалена навсегда'
     } else {
-      await notesStore.deleteNote(action.note.id)
+      await notesStore.deleteNote(noteEndpointId(action.note))
       isModalOpen.value = false
       toast.value = 'Заметка перемещена в корзину'
     }

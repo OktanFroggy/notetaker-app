@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from contextlib import asynccontextmanager
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
@@ -76,6 +77,23 @@ def note_payload(note: models.Note) -> dict[str, Any]:
     return NoteResponse.model_validate(note).model_dump(mode="json")
 
 
+VIRTUAL_NOTE_ID = re.compile(r"^(?P<master_id>\d+)_virtual_(?P<date>.+)$")
+
+
+def parse_note_id(note_id: str) -> tuple[int, datetime | None]:
+    match = VIRTUAL_NOTE_ID.fullmatch(note_id)
+    if match is None:
+        try:
+            return int(note_id), None
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid note id") from None
+    try:
+        original_date = datetime.fromisoformat(match.group("date").replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid virtual occurrence date") from None
+    return int(match.group("master_id")), original_date
+
+
 def next_occurrence(value: datetime, repeat: str) -> datetime:
     if repeat == "daily":
         return value + timedelta(days=1)
@@ -104,6 +122,9 @@ def expand_note_occurrences(
         occurrence["series_id"] = None
         return [occurrence]
 
+    exceptions = {
+        exception.original_date.isoformat(): exception for exception in note.exceptions
+    }
     current = note.target_datetime
     repeat_until = note.repeat_until
     occurrences: list[dict[str, Any]] = []
@@ -111,11 +132,26 @@ def expand_note_occurrences(
     while current <= repeat_until:
         after_start = target_from is None or current >= target_from
         before_end = target_to is None or current <= target_to
+        exception = exceptions.get(current.isoformat())
+        if exception is None and current.tzinfo is not None:
+            exception = exceptions.get(current.replace(microsecond=0).isoformat())
+        event_datetime = exception.new_event_date if exception and exception.new_event_date else current
+        if exception and exception.is_deleted:
+            current = next_occurrence(current, note.repeat)
+            occurrence_index += 1
+            continue
         if after_start and before_end:
             occurrence = note_payload(note)
-            occurrence["id"] = -(note.id * 1_000_000 + occurrence_index + 1)
-            occurrence["target_datetime"] = current.isoformat()
+            occurrence["id"] = f"{note.id}_virtual_{current.isoformat()}"
+            occurrence["target_datetime"] = event_datetime.isoformat()
             occurrence["series_id"] = note.id
+            if exception:
+                if exception.new_title is not None:
+                    occurrence["title"] = exception.new_title
+                if exception.new_text is not None:
+                    occurrence["text"] = exception.new_text
+                if exception.new_is_active is not None:
+                    occurrence["is_active"] = exception.new_is_active
             occurrences.append(occurrence)
         current = next_occurrence(current, note.repeat)
         occurrence_index += 1
@@ -140,10 +176,83 @@ async def cleanup_loop() -> None:
         await asyncio.sleep(24 * 60 * 60)
 
 
+def generate_recurring_reminders(db: Session, now: datetime) -> None:
+    notes = list(
+        db.scalars(
+            select(models.Note)
+            .where(
+                models.Note.repeat != "none",
+                models.Note.target_datetime.is_not(None),
+                models.Note.repeat_until.is_not(None),
+                models.Note.is_active.is_(True),
+                models.Note.deleted_at.is_(None),
+            )
+        ).all()
+    )
+    for note in notes:
+        exceptions = {exception.original_date.isoformat(): exception for exception in note.exceptions}
+        current = note.target_datetime
+        while current <= note.repeat_until:
+            exception = exceptions.get(current.isoformat())
+            if (
+                not exception
+                or (
+                    not exception.is_deleted
+                    and exception.new_is_active is not False
+                )
+            ):
+                event_datetime = exception.new_event_date if exception and exception.new_event_date else current
+                for reminder in note.reminders:
+                    remind_at = event_datetime - timedelta(minutes=reminder.offset_minutes)
+                    delivery = db.scalar(
+                        select(models.ReminderDelivery).where(
+                            models.ReminderDelivery.reminder_id == reminder.id,
+                            models.ReminderDelivery.occurrence_date == current,
+                        )
+                    )
+                    if delivery is None:
+                        db.add(
+                            models.ReminderDelivery(
+                                reminder_id=reminder.id,
+                                occurrence_date=current,
+                                remind_at=remind_at,
+                            )
+                        )
+            current = next_occurrence(current, note.repeat)
+    db.commit()
+
+
 def process_due_reminders() -> int:
     now = datetime.now(timezone.utc)
     sent_count = 0
     with SessionLocal() as db:
+        generate_recurring_reminders(db, now)
+        deliveries = list(
+            db.scalars(
+                select(models.ReminderDelivery)
+                .join(models.ReminderDelivery.reminder)
+                .join(models.Reminder.note)
+                .where(
+                    models.ReminderDelivery.is_sent.is_(False),
+                    models.ReminderDelivery.remind_at <= now,
+                    models.Note.is_active.is_(True),
+                    models.Note.deleted_at.is_(None),
+                )
+            ).all()
+        )
+        for delivery in deliveries:
+            note = delivery.reminder.note
+            exception = db.scalar(
+                select(models.NoteException).where(
+                    models.NoteException.master_note_id == note.id,
+                    models.NoteException.original_date == delivery.occurrence_date,
+                )
+            )
+            title = exception.new_title if exception and exception.new_title else note.title
+            send_email_notification(note.user_email, title, delivery.remind_at)
+            delivery.is_sent = True
+            db.commit()
+            sent_count += 1
         reminders = list(
             db.scalars(
                 select(models.Reminder)
@@ -151,6 +260,7 @@ def process_due_reminders() -> int:
                 .where(
                     models.Reminder.is_sent.is_(False),
                     models.Reminder.remind_at <= now,
+                    models.Note.repeat == "none",
                     models.Note.is_active.is_(True),
                     models.Note.deleted_at.is_(None),
                 )
@@ -358,14 +468,49 @@ async def create_note(
 
 @app.put("/api/notes/{note_id}", response_model=NoteResponse)
 async def update_note(
-    note_id: int,
+    note_id: str,
     note_data: NoteUpdate,
     current_email: str = Depends(get_current_email),
     db: Session = Depends(get_db),
 ) -> models.Note:
-    note = get_note_or_404(note_id, current_email, db)
+    master_id, original_date = parse_note_id(note_id)
+    note = get_note_or_404(master_id, current_email, db)
     if note.version != note_data.version:
         raise HTTPException(status_code=409, detail="Note version conflict")
+    if original_date is not None:
+        exception = db.scalar(
+            select(models.NoteException).where(
+                models.NoteException.master_note_id == master_id,
+                models.NoteException.original_date == original_date,
+            )
+        )
+        if exception is None:
+            exception = models.NoteException(
+                master_note_id=master_id, original_date=original_date
+            )
+            db.add(exception)
+        if "title" in note_data.model_fields_set:
+            exception.new_title = note_data.title
+        if "text" in note_data.model_fields_set:
+            exception.new_text = note_data.text
+        if "target_datetime" in note_data.model_fields_set:
+            exception.new_event_date = note_data.target_datetime
+        if "is_active" in note_data.model_fields_set:
+            exception.new_is_active = note_data.is_active
+        db.commit()
+        db.refresh(note)
+        occurrence = next(
+            (
+                item
+                for item in expand_note_occurrences(note)
+                if item["id"] == note_id
+            ),
+            None,
+        )
+        if occurrence is None:
+            raise HTTPException(status_code=404, detail="Occurrence not found")
+        await manager.broadcast("note_updated", {"note": occurrence}, current_email)
+        return occurrence
     updates = note_data.model_dump(
         exclude_unset=True,
         exclude={"version", "tag_ids", "reminders", "repeat", "repeat_until"},
@@ -392,9 +537,29 @@ async def update_note(
 
 @app.delete("/api/notes/{note_id}", response_model=NoteResponse)
 async def delete_note(
-    note_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+    note_id: str, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
 ) -> models.Note:
-    note = get_note_or_404(note_id, current_email, db)
+    master_id, original_date = parse_note_id(note_id)
+    note = get_note_or_404(master_id, current_email, db)
+    if original_date is not None:
+        exception = db.scalar(
+            select(models.NoteException).where(
+                models.NoteException.master_note_id == master_id,
+                models.NoteException.original_date == original_date,
+            )
+        )
+        if exception is None:
+            exception = models.NoteException(
+                master_note_id=master_id, original_date=original_date
+            )
+            db.add(exception)
+        exception.is_deleted = True
+        db.commit()
+        occurrence = note_payload(note)
+        occurrence["id"] = note_id
+        occurrence["series_id"] = master_id
+        await manager.broadcast("note_deleted", {"note": occurrence}, current_email)
+        return occurrence
     note.deleted_at = datetime.now().astimezone()
     note.is_active = False
     note.version += 1
@@ -406,9 +571,26 @@ async def delete_note(
 
 @app.post("/api/notes/{note_id}/restore", response_model=NoteResponse)
 async def restore_note(
-    note_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+    note_id: str, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
 ) -> models.Note:
-    note = get_note_or_404(note_id, current_email, db)
+    master_id, original_date = parse_note_id(note_id)
+    note = get_note_or_404(master_id, current_email, db)
+    if original_date is not None:
+        exception = db.scalar(
+            select(models.NoteException).where(
+                models.NoteException.master_note_id == master_id,
+                models.NoteException.original_date == original_date,
+            )
+        )
+        if exception is None:
+            raise HTTPException(status_code=404, detail="Occurrence not found")
+        exception.is_deleted = False
+        db.commit()
+        occurrence = next(
+            item for item in expand_note_occurrences(note) if item["id"] == note_id
+        )
+        await manager.broadcast("note_updated", {"note": occurrence}, current_email)
+        return occurrence
     note.deleted_at = None
     note.is_active = True
     note.version += 1
@@ -420,12 +602,25 @@ async def restore_note(
 
 @app.delete("/api/notes/{note_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
 async def permanently_delete_note(
-    note_id: int, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
+    note_id: str, current_email: str = Depends(get_current_email), db: Session = Depends(get_db)
 ) -> None:
-    note = get_note_or_404(note_id, current_email, db)
+    master_id, original_date = parse_note_id(note_id)
+    note = get_note_or_404(master_id, current_email, db)
+    if original_date is not None:
+        exception = db.scalar(
+            select(models.NoteException).where(
+                models.NoteException.master_note_id == master_id,
+                models.NoteException.original_date == original_date,
+            )
+        )
+        if exception is not None:
+            db.delete(exception)
+            db.commit()
+        await manager.broadcast("note_updated", {"note": note_payload(note)}, current_email)
+        return
     db.delete(note)
     db.commit()
-    await manager.broadcast("note_deleted", {"note_id": note_id}, current_email)
+    await manager.broadcast("note_deleted", {"note_id": master_id}, current_email)
 
 
 @app.get("/api/tags", response_model=list[TagResponse])
