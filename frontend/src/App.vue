@@ -6,7 +6,7 @@ import NoteModal from './components/NoteModal.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import ReminderModal from './components/ReminderModal.vue'
 import UserSettingsModal from './components/UserSettingsModal.vue'
-import { useNotesStore } from './stores/notes'
+import { resolveMasterNoteId, useNotesStore } from './stores/notes'
 import { useTagsStore } from './stores/tags'
 import { api, clearStoredEmail, getStoredEmail, setStoredEmail } from './stores/api'
 
@@ -56,28 +56,36 @@ const upcomingGroups = computed(() => {
 watch(() => notesStore.selectedTagId, () => notesStore.loadNotes())
 function openCreate(date = '') { editingNote.value = date ? { target_datetime: `${date}T09:00:00` } : null; isModalOpen.value = true }
 function openEdit(note) { editingNote.value = note; isModalOpen.value = true }
-async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(editingNote.value.id, { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
+async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(resolveMasterNoteId(editingNote.value), { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
 async function moveNote(eventInfo) {
-  const note = eventInfo.event.extendedProps.note
-  const noteId = note.series_id || note.id
+  const { info, note } = eventInfo
+  const noteId = resolveMasterNoteId(note)
   try {
     await notesStore.updateNote(noteId, {
-      target_datetime: eventInfo.event.start.toISOString(),
+      target_datetime: info.event.start.toISOString(),
       version: note.version,
     })
     await notesStore.loadNotes({ tab: 'calendar' })
     toast.value = 'Заметка перенесена'
   } catch (error) {
-    eventInfo.revert()
+    info.revert()
     toast.value = error.status === 409 ? 'Заметка была изменена в другом окне' : error.message
   }
 }
 function persistShownReminder(key) { shownReminderKeys.add(key); localStorage.setItem('shown_reminders', JSON.stringify([...shownReminderKeys])) }
 function closeReminder() {
   if (!reminderToShow.value) return
-  persistShownReminder(reminderToShow.value.key)
-  pendingReminderKeys.delete(reminderToShow.value.key)
+  const reminderKey = reminderToShow.value.key
+  persistShownReminder(reminderKey)
+  notesStore.sendReminderDismissed(reminderKey)
+  pendingReminderKeys.delete(reminderKey)
   reminderToShow.value = null
+}
+function handleReminderDismissed(reminderKey) {
+  if (!reminderKey) return
+  persistShownReminder(reminderKey)
+  pendingReminderKeys.delete(reminderKey)
+  if (reminderToShow.value?.key === reminderKey) reminderToShow.value = null
 }
 async function checkReminders() {
   if (!userEmail.value) return
@@ -171,8 +179,12 @@ watch(userEmail, (email, previousEmail) => {
 onMounted(() => {
   checkReminders()
   reminderTimer.value = window.setInterval(checkReminders, 15000)
+  window.__removeReminderDismissedListener = notesStore.onReminderDismissed(handleReminderDismissed)
 })
-onUnmounted(() => window.clearInterval(reminderTimer.value))
+onUnmounted(() => {
+  window.clearInterval(reminderTimer.value)
+  window.__removeReminderDismissedListener?.()
+})
 </script>
 
 <template>
@@ -182,7 +194,7 @@ onUnmounted(() => window.clearInterval(reminderTimer.value))
       <header class="topbar"><div><p class="eyebrow">Рабочее пространство</p><h1>Мои заметки</h1></div><div class="topbar-actions"><label class="search"><span>⌕</span><input v-model="notesStore.searchQuery" placeholder="Поиск заметок" /></label><button class="settings-button" type="button" aria-label="Настройки" title="Настройки" @click="isSettingsOpen = true">⚙<span>Настройки</span></button><button class="avatar" type="button">Ф</button></div></header>
       <section class="calendar-toolbar"><div class="calendar-summary"><span class="summary-dot"></span>{{ activeNotes }} активных заметок</div></section>
       <div v-if="notesStore.error" class="error-banner">{{ notesStore.error }} <button type="button" @click="notesStore.loadNotes">Повторить</button></div>
-      <section v-if="notesStore.activeTab === 'calendar'" class="calendar-wrap" :class="{ 'calendar-wrap--loading': notesStore.isLoading }"><CalendarView :events="noteEvents" @date-click="openCreate($event.dateStr)" @event-click="openEdit($event.event.extendedProps.note)" @event-drop="moveNote" /></section>
+      <section v-if="notesStore.activeTab === 'calendar'" class="calendar-wrap" :class="{ 'calendar-wrap--loading': notesStore.isLoading }"><CalendarView :events="noteEvents" @date-click="openCreate($event.dateStr)" @event-click="openEdit($event.note)" @event-drop="moveNote" /></section>
       <section v-else-if="notesStore.activeTab === 'upcoming'" class="notes-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-for="group in [{ title: 'Сегодня', notes: upcomingGroups.today }, { title: 'На этой неделе', notes: upcomingGroups.week }, { title: 'Прошедшие', notes: upcomingGroups.overdue }]" :key="group.title" class="notes-group"><h2>{{ group.title }}</h2><div v-if="!group.notes.length" class="notes-empty">Нет заметок</div><div v-else class="trash-grid"><article v-for="note in group.notes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime">{{ new Date(note.target_datetime).toLocaleString('ru-RU') }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Завершить</button></div></article></div></div></section>
       <section v-else-if="notesStore.activeTab === 'completed'" class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-if="!notesStore.filteredNotes.length && !notesStore.isLoading" class="trash-empty">Выполненных заметок нет</div><div v-else class="trash-grid"><article v-for="note in notesStore.filteredNotes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime || note.updated_at">{{ new Date(note.target_datetime || note.updated_at).toLocaleString('ru-RU') }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Вернуть в активные</button></div></article></div></section>
       <section v-else class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }">

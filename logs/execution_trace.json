@@ -65,6 +65,13 @@
       "summary": "Enabled authenticated WebSocket connections and automatic note list refreshes for create, update, and delete events."
     },
     {
+      "step": 16,
+      "action": "virtual_occurrence_ids_and_reminder_dismissal",
+      "status": "success",
+      "timestamp": "2026-09-16T10:20:00Z",
+      "summary": "Resolved virtual occurrence IDs to master notes and synchronized dismissed reminder modals across tabs."
+    },
+    {
       "step": 3,
       "action": "rest_api_implementation",
       "status": "success",

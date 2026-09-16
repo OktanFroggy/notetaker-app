@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from calendar import monthrange
 from datetime import datetime, timedelta, timezone
@@ -280,7 +281,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await manager.connect(websocket, email)
     try:
         while True:
-            await websocket.receive_text()
+            message = json.loads(await websocket.receive_text())
+            if message.get("event") == "reminder_dismissed" and message.get("reminder_key"):
+                await manager.broadcast(
+                    "reminder_dismissed",
+                    {"reminder_key": message["reminder_key"]},
+                    email,
+                )
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 

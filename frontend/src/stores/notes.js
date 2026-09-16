@@ -2,6 +2,14 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from './api'
 
+export function resolveMasterNoteId(noteOrId) {
+  const value = typeof noteOrId === 'object' && noteOrId !== null
+    ? (noteOrId.series_id || noteOrId.id)
+    : noteOrId
+  if (typeof value === 'string' && value.includes('_virtual_')) return Number(value.split('_virtual_')[0])
+  return Number(value)
+}
+
 export const useNotesStore = defineStore('notes', () => {
   const notes = ref([])
   const isLoading = ref(false)
@@ -13,6 +21,7 @@ export const useNotesStore = defineStore('notes', () => {
   let socket = null
   let reconnectTimer = null
   let connectedEmail = ''
+  const reminderDismissedListeners = new Set()
 
   function upsertNote(note) {
     const index = notes.value.findIndex((item) => item.id === note.id)
@@ -34,6 +43,9 @@ export const useNotesStore = defineStore('notes', () => {
       if (message.event === 'note_deleted') {
         const deletedId = message.note?.id || message.note_id
         notes.value = notes.value.filter((note) => note.id !== deletedId && note.series_id !== deletedId)
+      }
+      if (message.event === 'reminder_dismissed') {
+        reminderDismissedListeners.forEach((listener) => listener(message.reminder_key))
       }
     }
     socket.onclose = () => {
@@ -61,6 +73,17 @@ export const useNotesStore = defineStore('notes', () => {
       socket.onclose = null
       socket.close()
       socket = null
+    }
+
+    function sendReminderDismissed(reminderKey) {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ event: 'reminder_dismissed', reminder_key: reminderKey }))
+      }
+    }
+
+    function onReminderDismissed(listener) {
+      reminderDismissedListeners.add(listener)
+      return () => reminderDismissedListeners.delete(listener)
     }
   }
 
@@ -99,15 +122,17 @@ export const useNotesStore = defineStore('notes', () => {
   }
 
   async function updateNote(id, payload) {
-    const note = await api(`/api/notes/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
-    const index = notes.value.findIndex((item) => item.id === id)
+    const masterId = resolveMasterNoteId(id)
+    const note = await api(`/api/notes/${masterId}`, { method: 'PUT', body: JSON.stringify(payload) })
+    const index = notes.value.findIndex((item) => item.id === id || item.id === masterId || item.series_id === masterId)
     if (index !== -1) notes.value[index] = note
     return note
   }
 
   async function deleteNote(id) {
-    await api(`/api/notes/${id}`, { method: 'DELETE' })
-    notes.value = notes.value.filter((note) => note.id !== id)
+    const masterId = resolveMasterNoteId(id)
+    await api(`/api/notes/${masterId}`, { method: 'DELETE' })
+    notes.value = notes.value.filter((note) => note.id !== id && note.id !== masterId && note.series_id !== masterId)
   }
 
   async function loadTrash() {
@@ -129,6 +154,6 @@ export const useNotesStore = defineStore('notes', () => {
   return {
     notes, filteredNotes, isLoading, error, selectedTagId, activeTab, isTrashView, searchQuery,
     loadNotes, loadTrash, createNote, updateNote, deleteNote, restoreNote, permanentlyDeleteNote,
-    connectRealtime, disconnectRealtime,
+    connectRealtime, disconnectRealtime, sendReminderDismissed, onReminderDismissed,
   }
 })
