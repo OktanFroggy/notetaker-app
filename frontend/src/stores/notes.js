@@ -26,6 +26,8 @@ export const useNotesStore = defineStore('notes', () => {
   const listStatus = ref('all')
   const listTagIds = ref([])
   const listSortBy = ref('updated_at_desc')
+  const listPageSize = 100
+  const listHasMore = ref(false)
   const realtimeEnabled = true
   let socket = null
   let reconnectTimer = null
@@ -105,7 +107,7 @@ export const useNotesStore = defineStore('notes', () => {
     return matchesTag && matchesSearch
   }))
 
-  async function loadNotes({ tab = activeTab.value } = {}) {
+  async function loadNotes({ tab = activeTab.value, append = false } = {}) {
     isLoading.value = true
     error.value = ''
     try {
@@ -116,18 +118,24 @@ export const useNotesStore = defineStore('notes', () => {
       }
       const params = new URLSearchParams()
       if (tab === 'list') {
+        const offset = append ? notes.value.length : 0
         if (searchQuery.value.trim()) params.set('search', searchQuery.value.trim())
         listTagIds.value.forEach((tagId) => params.append('tag_ids', tagId))
         if (listStatus.value !== 'all') params.set('is_active', listStatus.value === 'active' ? 'true' : 'false')
         if (listTargetFrom.value) params.set('target_from', `${listTargetFrom.value}T00:00:00`)
         if (listTargetTo.value) params.set('target_to', `${listTargetTo.value}T23:59:59`)
         params.set('sort_by', listSortBy.value)
+        params.set('offset', String(offset))
+        params.set('limit', String(listPageSize))
       } else {
         if (selectedTagId.value) params.set('tag_id', selectedTagId.value)
         params.set('is_active', tab === 'completed' ? 'false' : 'true')
       }
       if (tab === 'calendar') params.set('expand_recurrences', 'true')
-      notes.value = await api(`/api/notes?${params}`)
+      const loadedNotes = await api(`/api/notes?${params}`)
+      if (tab === 'list' && append) notes.value = [...notes.value, ...loadedNotes]
+      else notes.value = loadedNotes
+      if (tab === 'list') listHasMore.value = loadedNotes.length === listPageSize
     } catch (requestError) {
       error.value = requestError.message
     } finally {
@@ -180,7 +188,7 @@ export const useNotesStore = defineStore('notes', () => {
 
   return {
     notes, filteredNotes, isLoading, error, selectedTagId, activeTab, isTrashView, searchQuery,
-    listTargetFrom, listTargetTo, listStatus, listTagIds, listSortBy,
+    listTargetFrom, listTargetTo, listStatus, listTagIds, listSortBy, listHasMore,
     loadNotes, loadTrash, createNote, updateNote, deleteNote, restoreNote, permanentlyDeleteNote,
     connectRealtime, disconnectRealtime, sendReminderDismissed, onReminderDismissed,
   }

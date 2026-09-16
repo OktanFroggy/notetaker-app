@@ -278,6 +278,25 @@ def process_due_reminders() -> int:
     return sent_count
 
 
+def suppress_overdue_reminders(note: models.Note, db: Session) -> None:
+    """Do not back-send reminders when an inactive note is activated late."""
+    now = datetime.now(timezone.utc)
+    for reminder in note.reminders:
+        if reminder.remind_at <= now:
+            reminder.is_sent = True
+    overdue_deliveries = db.scalars(
+        select(models.ReminderDelivery)
+        .join(models.Reminder)
+        .where(
+            models.Reminder.note_id == note.id,
+            models.ReminderDelivery.remind_at <= now,
+            models.ReminderDelivery.is_sent.is_(False),
+        )
+    ).all()
+    for delivery in overdue_deliveries:
+        delivery.is_sent = True
+
+
 async def reminder_scheduler_loop() -> None:
     while True:
         process_due_reminders()
@@ -411,6 +430,8 @@ def list_notes(
     target_from: datetime | None = Query(default=None),
     target_to: datetime | None = Query(default=None),
     sort_by: str = Query(default="updated_at_desc", pattern=r"^(event_date_asc|event_date_desc|updated_at_desc|updated_at_asc)$"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=1000, ge=1, le=2000),
     expand_recurrences: bool = Query(default=False),
     current_email: str = Depends(get_current_email),
     db: Session = Depends(get_db),
@@ -437,7 +458,11 @@ def list_notes(
         query = query.where(models.Note.target_datetime <= target_to)
     sort_column = models.Note.target_datetime if sort_by.startswith("event_date") else models.Note.updated_at
     sort_order = asc if sort_by.endswith("_asc") else desc
-    notes = list(db.scalars(query.order_by(sort_order(sort_column).nulls_last())).unique().all())
+    notes = list(
+        db.scalars(
+            query.order_by(sort_order(sort_column).nulls_last()).offset(offset).limit(limit)
+        ).unique().all()
+    )
     if not expand_recurrences:
         return notes
     expanded = []
@@ -529,6 +554,7 @@ async def update_note(
         exclude_unset=True,
         exclude={"version", "tag_ids", "reminders", "repeat", "repeat_until"},
     )
+    was_inactive = not note.is_active
     for field, value in updates.items():
         setattr(note, field, value)
     if "repeat" in note_data.model_fields_set:
@@ -542,6 +568,8 @@ async def update_note(
         note.reminders.extend(
             models.Reminder(**reminder.model_dump()) for reminder in note_data.reminders
         )
+    if was_inactive and note.is_active:
+        suppress_overdue_reminders(note, db)
     note.version += 1
     db.commit()
     db.refresh(note)
@@ -607,6 +635,7 @@ async def restore_note(
         return occurrence
     note.deleted_at = None
     note.is_active = True
+    suppress_overdue_reminders(note, db)
     note.version += 1
     db.commit()
     db.refresh(note)
