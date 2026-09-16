@@ -76,7 +76,7 @@ watch(
 )
 function openCreate(date = '') { editingNote.value = date ? { target_datetime: `${date}T09:00:00` } : null; isModalOpen.value = true }
 function openEdit(note) { editingNote.value = note; isModalOpen.value = true }
-function noteEndpointId(note) { return note?.occurrence_id || (typeof note?.id === 'string' && note.id.includes('_virtual_') ? note.id : resolveMasterNoteId(note)) }
+function noteEndpointId(note) { return note?.occurrence_id || (typeof note?.id === 'string' && /^\d+(?:_virtual_|_)\d{4}-\d{2}-\d{2}/.test(note.id) ? note.id : resolveMasterNoteId(note)) }
 async function saveNote(payload) { try { if (editingNote.value?.id) await notesStore.updateNote(noteEndpointId(editingNote.value), { ...payload, version: editingNote.value.version }); else await notesStore.createNote(payload); isModalOpen.value = false; conflict.value = false; toast.value = 'Заметка сохранена' } catch (error) { if (error.status === 409) conflict.value = true; else toast.value = error.message } }
 async function moveNote(eventInfo) {
   const { info, note } = eventInfo

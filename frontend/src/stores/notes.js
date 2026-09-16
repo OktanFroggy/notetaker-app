@@ -2,11 +2,15 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from './api'
 
+function isOccurrenceId(value) {
+  return typeof value === 'string' && /^\d+(?:_virtual_|_)\d{4}-\d{2}-\d{2}/.test(value)
+}
+
 export function resolveMasterNoteId(noteOrId) {
   const value = typeof noteOrId === 'object' && noteOrId !== null
     ? (noteOrId.series_id || noteOrId.id)
     : noteOrId
-  if (typeof value === 'string' && value.includes('_virtual_')) return Number(value.split('_virtual_')[0])
+  if (isOccurrenceId(value)) return Number(value.split(/_virtual_|_/)[0])
   return Number(value)
 }
 
@@ -137,7 +141,7 @@ export const useNotesStore = defineStore('notes', () => {
 
   async function updateNote(id, payload) {
     const masterId = resolveMasterNoteId(id)
-    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : masterId
+    const endpointId = isOccurrenceId(id) ? id : masterId
     const note = await api(`/api/notes/${endpointId}`, { method: 'PUT', body: JSON.stringify(payload) })
     const index = notes.value.findIndex((item) => item.id === id || item.id === masterId || item.series_id === masterId)
     if (index !== -1) notes.value[index] = note
@@ -146,7 +150,7 @@ export const useNotesStore = defineStore('notes', () => {
 
   async function deleteNote(id) {
     const masterId = resolveMasterNoteId(id)
-    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : masterId
+    const endpointId = isOccurrenceId(id) ? id : masterId
     await api(`/api/notes/${endpointId}`, { method: 'DELETE' })
     notes.value = notes.value.filter((note) => note.id !== id && note.id !== masterId && note.series_id !== masterId)
   }
@@ -156,15 +160,18 @@ export const useNotesStore = defineStore('notes', () => {
   }
 
   async function restoreNote(id) {
-    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : resolveMasterNoteId(id)
+    const endpointId = isOccurrenceId(id) ? id : resolveMasterNoteId(id)
     await api(`/api/notes/${endpointId}/restore`, { method: 'POST' })
     notes.value = notes.value.filter((note) => note.id !== id)
   }
 
   async function permanentlyDeleteNote(id) {
-    const endpointId = typeof id === 'string' && id.includes('_virtual_') ? id : resolveMasterNoteId(id)
+    const masterId = resolveMasterNoteId(id)
+    const endpointId = isOccurrenceId(id) ? id : masterId
     await api(`/api/notes/${endpointId}/permanent`, { method: 'DELETE' })
-    notes.value = notes.value.filter((note) => note.id !== id)
+    notes.value = notes.value.filter((note) => (
+      note.id !== id && note.id !== masterId && note.series_id !== masterId
+    ))
   }
 
   const isTrashView = computed(() => activeTab.value === 'trash')

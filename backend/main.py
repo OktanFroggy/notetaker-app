@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Web
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import JSONResponse
-from sqlalchemy import asc, desc, or_, select
+from sqlalchemy import asc, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -77,7 +77,7 @@ def note_payload(note: models.Note) -> dict[str, Any]:
     return NoteResponse.model_validate(note).model_dump(mode="json")
 
 
-VIRTUAL_NOTE_ID = re.compile(r"^(?P<master_id>\d+)_virtual_(?P<date>.+)$")
+VIRTUAL_NOTE_ID = re.compile(r"^(?P<master_id>\d+)(?:_virtual_|_)(?P<date>.+)$")
 
 
 def parse_note_id(note_id: str) -> tuple[int, datetime | None]:
@@ -621,17 +621,37 @@ async def permanently_delete_note(
     master_id, original_date = parse_note_id(note_id)
     note = get_note_or_404(master_id, current_email, db)
     if original_date is not None:
-        exception = db.scalar(
-            select(models.NoteException).where(
-                models.NoteException.master_note_id == master_id,
-                models.NoteException.original_date == original_date,
-            )
+        exceptions = list(
+            db.scalars(
+                select(models.NoteException).where(
+                    models.NoteException.master_note_id == master_id
+                )
+            ).all()
+        )
+        exception = next(
+            (
+                item
+                for item in exceptions
+                if item.original_date == original_date
+                or item.original_date.date() == original_date.date()
+            ),
+            None,
         )
         if exception is not None:
             db.delete(exception)
             db.commit()
         await manager.broadcast("note_updated", {"note": note_payload(note)}, current_email)
         return
+    reminder_ids = [reminder.id for reminder in note.reminders]
+    if reminder_ids:
+        db.execute(
+            delete(models.ReminderDelivery).where(
+                models.ReminderDelivery.reminder_id.in_(reminder_ids)
+            )
+        )
+        for reminder in note.reminders:
+            db.delete(reminder)
+    note.tags.clear()
     db.delete(note)
     db.commit()
     await manager.broadcast("note_deleted", {"note_id": master_id}, current_email)
