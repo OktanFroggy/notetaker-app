@@ -17,6 +17,11 @@ export const useNotesStore = defineStore('notes', () => {
   const selectedTagId = ref(null)
   const activeTab = ref('calendar')
   const searchQuery = ref('')
+  const listTargetFrom = ref('')
+  const listTargetTo = ref('')
+  const listStatus = ref('all')
+  const listTagIds = ref([])
+  const listSortBy = ref('updated_at_desc')
   const realtimeEnabled = true
   let socket = null
   let reconnectTimer = null
@@ -103,39 +108,24 @@ export const useNotesStore = defineStore('notes', () => {
         notes.value = await api('/api/notes/trash')
         return
       }
-      if (tab === 'list') {
-        notes.value = await api('/api/notes?sort_by=updated_at_desc')
-        return
-      }
       const params = new URLSearchParams()
-      if (selectedTagId.value) params.set('tag_id', selectedTagId.value)
-      params.set('is_active', tab === 'completed' ? 'false' : 'true')
+      if (tab === 'list') {
+        if (searchQuery.value.trim()) params.set('search', searchQuery.value.trim())
+        listTagIds.value.forEach((tagId) => params.append('tag_ids', tagId))
+        if (listStatus.value !== 'all') params.set('is_active', listStatus.value === 'active' ? 'true' : 'false')
+        if (listTargetFrom.value) params.set('target_from', `${listTargetFrom.value}T00:00:00`)
+        if (listTargetTo.value) params.set('target_to', `${listTargetTo.value}T23:59:59`)
+        params.set('sort_by', listSortBy.value)
+      } else {
+        if (selectedTagId.value) params.set('tag_id', selectedTagId.value)
+        params.set('is_active', tab === 'completed' ? 'false' : 'true')
+      }
       if (tab === 'calendar') params.set('expand_recurrences', 'true')
       notes.value = await api(`/api/notes?${params}`)
     } catch (requestError) {
       error.value = requestError.message
     } finally {
       isLoading.value = false
-    }
-
-    async function loadList(filters = {}) {
-      isLoading.value = true
-      error.value = ''
-      activeTab.value = 'list'
-      try {
-        const params = new URLSearchParams()
-        if (filters.search?.trim()) params.set('search', filters.search.trim())
-        if (filters.target_from) params.set('target_from', `${filters.target_from}T00:00:00Z`)
-        if (filters.target_to) params.set('target_to', `${filters.target_to}T23:59:59Z`)
-        if (filters.status && filters.status !== 'all') params.set('is_active', filters.status === 'active' ? 'true' : 'false')
-        for (const tagId of filters.tag_ids || []) params.append('tag_ids', tagId)
-        params.set('sort_by', filters.sort_by || 'updated_at_desc')
-        notes.value = await api(`/api/notes?${params}`)
-      } catch (requestError) {
-        error.value = requestError.message
-      } finally {
-        isLoading.value = false
-      }
     }
   }
 
@@ -181,7 +171,8 @@ export const useNotesStore = defineStore('notes', () => {
 
   return {
     notes, filteredNotes, isLoading, error, selectedTagId, activeTab, isTrashView, searchQuery,
-    loadNotes, loadList, loadTrash, createNote, updateNote, deleteNote, restoreNote, permanentlyDeleteNote,
+    listTargetFrom, listTargetTo, listStatus, listTagIds, listSortBy,
+    loadNotes, loadTrash, createNote, updateNote, deleteNote, restoreNote, permanentlyDeleteNote,
     connectRealtime, disconnectRealtime, sendReminderDismissed, onReminderDismissed,
   }
 })

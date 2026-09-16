@@ -90,7 +90,7 @@
       "action": "server_side_note_list_filters_and_sorting",
       "status": "success",
       "timestamp": "2026-09-16T11:10:00Z",
-      "summary": "Added a dedicated note list screen with SQL-backed search, date range, status, multi-tag filters, and sorting modes."
+      "summary": "Added a full note list screen with SQL-backed search, date range, status, multi-tag filters, and event/update sorting."
     },
     {
       "step": 3,

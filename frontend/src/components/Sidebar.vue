@@ -35,7 +35,7 @@ function requestDeleteTag(tag) { emit('delete-tag', tag) }
 
     <nav class="sidebar-nav" aria-label="Навигация">
       <button class="nav-item" :class="{ 'nav-item--active': activeTab === 'calendar' }" type="button" @click="emit('select-calendar')"><span class="nav-icon">◷</span> Календарь</button>
-      <button class="nav-item" :class="{ 'nav-item--active': activeTab === 'list' }" type="button" @click="emit('select-list')"><span class="nav-icon">☷</span> Список заметок</button>
+      <button class="nav-item" :class="{ 'nav-item--active': activeTab === 'list' }" type="button" @click="emit('select-list')"><span class="nav-icon">☷</span> Список</button>
       <button class="nav-item" :class="{ 'nav-item--active': activeTab === 'upcoming' }" type="button" @click="emit('select-upcoming')"><span class="nav-icon">⌁</span> Ближайшее</button>
       <button class="nav-item" :class="{ 'nav-item--active': activeTab === 'completed' }" type="button" @click="emit('select-completed')"><span class="nav-icon">✓</span> Выполненные</button>
       <button class="nav-item" :class="{ 'nav-item--active': isTrashView }" type="button" @click="emit('open-trash')"><span class="nav-icon">⌫</span> Корзина</button>

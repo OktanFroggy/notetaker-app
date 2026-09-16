@@ -418,11 +418,9 @@ def list_notes(
     query = select(models.Note).where(
         models.Note.deleted_at.is_(None), models.Note.user_email == current_email
     )
-    selected_tag_ids = tag_ids or ([] if tag_id is None else [tag_id])
-    if selected_tag_ids:
-        query = query.join(models.Note.tags).where(models.Tag.id.in_(selected_tag_ids))
-    if is_active is not None:
-        query = query.where(models.Note.is_active == is_active)
+    requested_tag_ids = list(dict.fromkeys((tag_ids or []) + ([tag_id] if tag_id is not None else [])))
+    if requested_tag_ids:
+        query = query.join(models.Note.tags).where(models.Tag.id.in_(requested_tag_ids))
     if search and search.strip():
         search_pattern = f"%{search.strip()}%"
         query = query.where(
@@ -431,20 +429,15 @@ def list_notes(
                 models.Note.text.ilike(search_pattern),
             )
         )
+    if is_active is not None:
+        query = query.where(models.Note.is_active == is_active)
     if target_from is not None and not expand_recurrences:
         query = query.where(models.Note.target_datetime >= target_from)
     if target_to is not None and not expand_recurrences:
         query = query.where(models.Note.target_datetime <= target_to)
-    sort_column = models.Note.updated_at
-    sort_direction = desc
-    if sort_by == "event_date_asc":
-        sort_column = models.Note.target_datetime
-        sort_direction = asc
-    elif sort_by == "event_date_desc":
-        sort_column = models.Note.target_datetime
-    notes = list(
-        db.scalars(query.order_by(sort_direction(sort_column).nullslast(), models.Note.id)).unique().all()
-    )
+    sort_column = models.Note.target_datetime if sort_by.startswith("event_date") else models.Note.updated_at
+    sort_order = asc if sort_by.endswith("_asc") else desc
+    notes = list(db.scalars(query.order_by(sort_order(sort_column).nulls_last())).unique().all())
     if not expand_recurrences:
         return notes
     expanded = []

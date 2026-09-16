@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import CalendarView from './components/CalendarView.vue'
-import NotesList from './components/NotesList.vue'
 import NoteModal from './components/NoteModal.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import ReminderModal from './components/ReminderModal.vue'
@@ -27,6 +26,7 @@ const isSettingsOpen = ref(!userEmail.value)
 const reminderTimer = ref(null)
 const shownReminderKeys = new Set(JSON.parse(localStorage.getItem('shown_reminders') || '[]'))
 const pendingReminderKeys = new Set()
+let listFilterTimer = null
 const isFirstRun = computed(() => !userEmail.value)
 const activeNotes = computed(() => notesStore.filteredNotes.filter((note) => note.is_active).length)
 const noteEvents = computed(() => notesStore.filteredNotes.map((note) => {
@@ -59,6 +59,21 @@ const upcomingGroups = computed(() => {
   return groups
 })
 watch(() => notesStore.selectedTagId, () => notesStore.loadNotes())
+watch(
+  () => [
+    notesStore.searchQuery,
+    notesStore.listTargetFrom,
+    notesStore.listTargetTo,
+    notesStore.listStatus,
+    notesStore.listTagIds.slice(),
+    notesStore.listSortBy,
+  ],
+  () => {
+    if (notesStore.activeTab !== 'list') return
+    window.clearTimeout(listFilterTimer)
+    listFilterTimer = window.setTimeout(() => notesStore.loadNotes({ tab: 'list' }), 250)
+  },
+)
 function openCreate(date = '') { editingNote.value = date ? { target_datetime: `${date}T09:00:00` } : null; isModalOpen.value = true }
 function openEdit(note) { editingNote.value = note; isModalOpen.value = true }
 function noteEndpointId(note) { return note?.occurrence_id || (typeof note?.id === 'string' && note.id.includes('_virtual_') ? note.id : resolveMasterNoteId(note)) }
@@ -146,8 +161,7 @@ async function restoreNote(note) {
 }
 async function openTrash() { await notesStore.loadTrash() }
 async function openCalendar() { await notesStore.loadNotes({ tab: 'calendar' }) }
-async function openList() { await notesStore.loadList() }
-async function applyListFilters(filters) { await notesStore.loadList(filters) }
+async function openList() { await notesStore.loadNotes({ tab: 'list' }) }
 async function openCompleted() { await notesStore.loadNotes({ tab: 'completed' }) }
 async function openUpcoming() { await notesStore.loadNotes({ tab: 'upcoming' }) }
 async function reloadConflict() { await notesStore.loadNotes(); editingNote.value = notesStore.notes.find((note) => note.id === editingNote.value?.id) || null; conflict.value = false }
@@ -197,6 +211,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   window.clearInterval(reminderTimer.value)
+  window.clearTimeout(listFilterTimer)
   window.__removeReminderDismissedListener?.()
 })
 </script>
@@ -209,7 +224,17 @@ onUnmounted(() => {
       <section class="calendar-toolbar"><div class="calendar-summary"><span class="summary-dot"></span>{{ activeNotes }} активных заметок</div></section>
       <div v-if="notesStore.error" class="error-banner">{{ notesStore.error }} <button type="button" @click="notesStore.loadNotes">Повторить</button></div>
       <section v-if="notesStore.activeTab === 'calendar'" class="calendar-wrap" :class="{ 'calendar-wrap--loading': notesStore.isLoading }"><CalendarView :events="noteEvents" @date-click="openCreate($event.dateStr)" @event-click="openEdit($event.note)" @event-drop="moveNote" /></section>
-      <NotesList v-else-if="notesStore.activeTab === 'list'" :tags="tagsStore.tags" :notes="notesStore.filteredNotes" :loading="notesStore.isLoading" :initial-search="notesStore.searchQuery" @apply="applyListFilters" @open="openEdit" />
+      <section v-else-if="notesStore.activeTab === 'list'" class="notes-view">
+        <div class="list-filters">
+          <label class="field-label">С даты<input v-model="notesStore.listTargetFrom" type="date" /></label>
+          <label class="field-label">По дату<input v-model="notesStore.listTargetTo" type="date" /></label>
+          <label class="field-label">Статус<select v-model="notesStore.listStatus"><option value="all">Все</option><option value="active">Активные</option><option value="inactive">Деактивированные</option></select></label>
+          <label class="field-label">Сортировка<select v-model="notesStore.listSortBy"><option value="event_date_asc">Дата заметки: сначала ранние</option><option value="event_date_desc">Дата заметки: сначала поздние</option><option value="updated_at_desc">Дата изменения: новые</option></select></label>
+        </div>
+        <fieldset class="tag-picker list-tag-picker"><legend>Теги</legend><label v-for="tag in tagsStore.tags" :key="tag.id" class="tag-check"><input v-model="notesStore.listTagIds" :value="tag.id" type="checkbox" />{{ tag.name }}</label><span v-if="!tagsStore.tags.length" class="muted">Теги пока не созданы</span></fieldset>
+        <div v-if="!notesStore.notes.length && !notesStore.isLoading" class="notes-empty">Заметки не найдены</div>
+        <div v-else class="trash-grid"><article v-for="note in notesStore.notes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime || note.updated_at">{{ formatUserDate(note.target_datetime || note.updated_at, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">{{ note.is_active ? 'Деактивировать' : 'Активировать' }}</button></div></article></div>
+      </section>
       <section v-else-if="notesStore.activeTab === 'upcoming'" class="notes-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-for="group in [{ title: 'Сегодня', notes: upcomingGroups.today }, { title: 'На этой неделе', notes: upcomingGroups.week }, { title: 'Прошедшие', notes: upcomingGroups.overdue }]" :key="group.title" class="notes-group"><h2>{{ group.title }}</h2><div v-if="!group.notes.length" class="notes-empty">Нет заметок</div><div v-else class="trash-grid"><article v-for="note in group.notes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime">{{ formatUserDate(note.target_datetime, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Завершить</button></div></article></div></div></section>
       <section v-else-if="notesStore.activeTab === 'completed'" class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }"><div v-if="!notesStore.filteredNotes.length && !notesStore.isLoading" class="trash-empty">Выполненных заметок нет</div><div v-else class="trash-grid"><article v-for="note in notesStore.filteredNotes" :key="note.id" class="trash-card"><div class="trash-card__body"><h2>{{ note.title }}</h2><p>{{ note.text || 'Без текста' }}</p><time :datetime="note.target_datetime || note.updated_at">{{ formatUserDate(note.target_datetime || note.updated_at, userSettingsStore.timezone) }}</time></div><div class="trash-card__actions"><button class="button button--quiet" type="button" @click="openEdit(note)">Изменить</button><button class="button button--primary" type="button" @click="toggleNoteStatus(note)">Вернуть в активные</button></div></article></div></section>
       <section v-else class="trash-view" :class="{ 'trash-view--loading': notesStore.isLoading }">
