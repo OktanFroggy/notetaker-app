@@ -31,6 +31,8 @@
 - база данных `notetaker_db`;
 - пользователь PostgreSQL с правами создания таблиц.
 
+Для запуска всего стека в Docker достаточно Docker Desktop с Compose v2.
+
 ## Локальный запуск
 
 ### 1. PostgreSQL
@@ -90,6 +92,57 @@ npm run preview
 Пароли и JWT не добавлялись, поскольку вход оставлен на усмотрение ТЗ, а
 проект предназначен для локальной демонстрации.
 
+## Запуск через Docker Compose
+
+Docker Compose запускает PostgreSQL, FastAPI/Uvicorn и production-сборку Vue
+через Nginx. Данные PostgreSQL и лог email-заглушки сохраняются в именованных
+volumes.
+
+1. Скопируйте пример переменных окружения:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+При необходимости измените порты и параметры PostgreSQL в `.env`. Файл `.env`
+не коммитится в репозиторий.
+
+2. Соберите и запустите весь стек из корня проекта:
+
+```powershell
+docker compose up --build
+```
+
+После запуска:
+
+- приложение: `http://localhost:${FRONTEND_PORT}` (по умолчанию
+  `http://localhost:5173`);
+- API и Swagger: `http://localhost:${BACKEND_PORT}/docs` (по умолчанию
+  `http://localhost:8000/docs`);
+- PostgreSQL доступен с хоста на `${POSTGRES_PORT}` (по умолчанию `5432`).
+
+Остановить контейнеры можно сочетанием `Ctrl+C`, а удалить контейнеры и сеть —
+командой:
+
+```powershell
+docker compose down
+```
+
+Чтобы удалить также сохранённые данные PostgreSQL, используйте `docker compose
+down -v`. При обычном `down` данные в volume `postgres_data` сохраняются.
+
+Проверка статуса и логов:
+
+```powershell
+docker compose ps
+docker compose logs -f backend
+```
+
+Backend подключается к PostgreSQL по внутреннему имени сервиса `postgres`;
+поэтому `DATABASE_URL` формируется Compose из переменных `.env` и не требует
+ручной настройки. Frontend использует относительные `/api` и `/ws`, которые
+Nginx проксирует в контейнер backend.
+
 ## Матрица соответствия ТЗ
 
 | Требование | Статус | Реализация / доказательство |
@@ -142,8 +195,8 @@ npm run preview
    пользовательские настройки.
 4. FullCalendar закрывает календарные режимы и drag-and-drop без самописной
    сетки.
-5. Docker не обязателен: локальная связка Python + Node.js + PostgreSQL
-   быстрее разворачивается в условиях задания.
+5. Docker Compose добавлен как воспроизводимый способ локального запуска
+   PostgreSQL, FastAPI и production-сборки Vue одной командой.
 6. Email моделируется записью в файл, что разрешено ТЗ для внешних сервисов.
 
 ## AI-инструменты и журнал работы
